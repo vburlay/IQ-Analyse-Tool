@@ -140,18 +140,29 @@ def render_monitoring_tab(get_refresh_state_fn):
                         className="monitoring-toolbar-login",
                     ),
                     html.Div(
-                        id="monitoring-stand-line",
-                        children=get_monitoring_stand_text(
-                            refresh_state["last_stand"] if date_basis == "elad" else None,
-                            date_basis,
-                        ),
-                        style={
-                            **MONITORING_INFO_LINE_STYLE,
-                            "width": "auto",
-                            "margin": "0",
-                            "fontSize": "21px",
-                        },
-                        className="monitoring-toolbar-stand",
+                        [
+                            html.Div(
+                                id="monitoring-stand-line",
+                                children=get_monitoring_stand_text(
+                                    refresh_state["last_stand"] if date_basis == "elad" else None,
+                                    date_basis,
+                                ),
+                                style={
+                                    **MONITORING_INFO_LINE_STYLE,
+                                    "width": "auto",
+                                    "margin": "0",
+                                    "fontSize": "21px",
+                                    "justifyContent": "flex-start",
+                                },
+                                className="monitoring-toolbar-stand",
+                            ),
+                            html.Div(
+                                id="hana-login-message",
+                                className="hana-login-message",
+                                role="status",
+                            ),
+                        ],
+                        className="monitoring-toolbar-status",
                     ),
                     html.Div(
                         [
@@ -196,7 +207,6 @@ def render_monitoring_tab(get_refresh_state_fn):
                 ],
                 className="monitoring-toolbar",
             ),
-            html.Div(id="hana-login-message", className="hana-login-message", role="status"),
             html.Div(
                 [
                     kpi_card(

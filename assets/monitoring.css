@@ -55,10 +55,12 @@
     background: #eaf2f8;
 }
 
-.monitoring-toolbar-stand {
+.monitoring-toolbar-status {
     flex: 1 0 auto;
-    text-align: center;
-    white-space: nowrap;
+    max-width: 100%;
+    display: grid;
+    justify-content: center;
+    gap: 4px;
 }
 
 .monitoring-toolbar-filters {
@@ -130,10 +132,7 @@
 }
 
 .hana-login-message {
-    width: 90%;
-    margin: 0 auto 8px auto;
     min-height: 20px;
-    text-align: center;
     color: #566b7e;
     font-size: 14px;
 }
