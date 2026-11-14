@@ -1,0 +1,285 @@
+.app-section-title--monitoring {
+    font-size: 25px !important;
+    font-weight: 400;
+    color: #344a42 !important;
+}
+
+.monitoring-year-dropdown,
+.monitoring-year-dropdown .Select-menu-outer,
+.monitoring-year-dropdown .VirtualizedSelectOption {
+    z-index: 1200 !important;
+}
+
+.monitoring-year-dropdown .Select-control {
+    height: 34px !important;
+    min-height: 34px !important;
+    box-sizing: border-box;
+}
+
+.monitoring-year-dropdown .Select-placeholder,
+.monitoring-year-dropdown .Select-value,
+.monitoring-year-dropdown .Select-value-label {
+    line-height: 32px !important;
+}
+
+.monitoring-year-dropdown .Select-input {
+    height: 32px !important;
+}
+
+.monitoring-year-dropdown .Select-arrow-zone,
+.monitoring-year-dropdown .Select-clear-zone {
+    height: 32px !important;
+}
+
+.monitoring-toolbar {
+    width: 90%;
+    margin: 0 auto 8px auto;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    min-height: 40px;
+    position: relative;
+    z-index: 1000;
+}
+
+.monitoring-toolbar-login {
+    display: grid;
+    grid-template-columns: repeat(3, max-content);
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px 12px;
+    border: 1px solid #cbdbe8;
+    border-radius: 12px;
+    background: #eaf2f8;
+}
+
+.monitoring-toolbar-stand {
+    flex: 1 0 auto;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.monitoring-toolbar-filters {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 16px;
+    z-index: 1100;
+}
+
+.hana-login-title {
+    grid-column: 1 / -1;
+    color: #243b5a;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.hana-login-input {
+    width: 150px;
+    height: 34px;
+    box-sizing: border-box;
+    padding: 0 12px;
+    border: 1px solid #8893b2;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #243b5a;
+    font-size: 14px;
+}
+
+.danger-outline-button {
+    height: 42px;
+    padding: 0 16px;
+    border: 1px solid #b84a4a;
+    border-radius: 8px;
+    color: #9d3434;
+    background: #ffffff;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.danger-outline-button:hover {
+    background: #fff4f4;
+}
+
+.data-management-row {
+    width: 100%;
+    box-sizing: border-box;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 24px;
+    padding: 14px 18px;
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid #d9e0e6;
+    border-radius: 10px;
+}
+
+.data-management-title {
+    color: #344a42;
+    font-size: 16px;
+    font-weight: 650;
+}
+
+.data-management-description {
+    margin-top: 3px;
+    color: #6a7886;
+    font-size: 13px;
+}
+
+.hana-login-message {
+    width: 90%;
+    margin: 0 auto 8px auto;
+    min-height: 20px;
+    text-align: center;
+    color: #566b7e;
+    font-size: 14px;
+}
+
+.hana-login-success {
+    color: #23673e;
+    font-weight: 600;
+}
+
+@media (max-width: 650px) {
+    .monitoring-toolbar-login {
+        display: flex;
+    }
+
+    .hana-login-title {
+        flex-basis: 100%;
+        text-align: center;
+    }
+
+    .monitoring-toolbar {
+        justify-content: center;
+        gap: 10px;
+    }
+
+    .monitoring-toolbar-login,
+    .monitoring-toolbar-filters {
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+}
+
+.ag-theme-alpine .ag-header-cell.pivot-index-header {
+    background-color: #dce7ec !important;
+    color: #294754 !important;
+    font-weight: 700;
+    border-right: 1px solid #c6d4da !important;
+}
+
+.ag-theme-alpine .ag-header-cell.pivot-index-header .ag-header-cell-text,
+.ag-theme-alpine .ag-header-cell.pivot-index-header .ag-icon {
+    color: #294754 !important;
+}
+
+.ag-theme-alpine .ag-header-cell.pivot-highlighted-header {
+    background-color: #e8f2eb !important;
+    color: #315743 !important;
+    font-weight: 650;
+    border-right: 1px solid #d7e5db !important;
+}
+
+.ag-theme-alpine .ag-header-cell.pivot-highlighted-header .ag-header-cell-text,
+.ag-theme-alpine .ag-header-cell.pivot-highlighted-header .ag-icon {
+    color: #315743 !important;
+}
+
+.ag-theme-alpine .ag-header-cell.pivot-index-header:hover {
+    background-color: #d3e1e7 !important;
+}
+
+.ag-theme-alpine .ag-header-cell.pivot-highlighted-header:hover {
+    background-color: #deece2 !important;
+}
+
+.ag-theme-alpine .ag-header-group-cell.pivot-highlighted-header-group {
+    background-color: #dbeadd !important;
+    color: #294d38 !important;
+    font-weight: 700;
+    border-bottom: 1px solid #c9dccd !important;
+}
+
+.ag-theme-alpine .ag-header-group-cell.pivot-highlighted-header-group:hover {
+    background-color: #d3e4d6 !important;
+}
+
+.ag-theme-alpine .ag-header-cell.pivot-summary-header {
+    background-color: #edf1f4 !important;
+    color: #3b4d58 !important;
+    font-weight: 650;
+    border-right: 1px solid #dce3e7 !important;
+}
+
+.ag-theme-alpine .ag-header-cell.pivot-summary-header .ag-header-cell-text,
+.ag-theme-alpine .ag-header-cell.pivot-summary-header .ag-icon {
+    color: #3b4d58 !important;
+}
+
+.ag-theme-alpine .ag-header-cell.pivot-summary-header:hover {
+    background-color: #e5ebef !important;
+}
+
+/* Forecast result table: calm two-level visual grouping. */
+.ag-theme-alpine .ag-header-cell.header-datenstand {
+    background-color: #E8EDF3 !important;
+    color: #243B5A !important;
+    font-weight: 700;
+    border-right: 1px solid #D5DCE4 !important;
+}
+
+.ag-theme-alpine .ag-header-group-cell.header-faelle {
+    background-color: #DCEEFF !important;
+}
+
+.ag-theme-alpine .ag-header-cell.header-faelle-sub {
+    background-color: #EEF7FF !important;
+}
+
+.ag-theme-alpine .ag-header-group-cell.header-lueckentage {
+    background-color: #DDF4F1 !important;
+}
+
+.ag-theme-alpine .ag-header-cell.header-lueckentage-sub {
+    background-color: #EFFAF8 !important;
+}
+
+.ag-theme-alpine .ag-header-group-cell.header-ertragswert {
+    background-color: #E5F3E5 !important;
+}
+
+.ag-theme-alpine .ag-header-cell.header-ertragswert-sub {
+    background-color: #F1F8F1 !important;
+}
+
+.ag-theme-alpine .ag-header-group-cell.header-faelle,
+.ag-theme-alpine .ag-header-group-cell.header-lueckentage,
+.ag-theme-alpine .ag-header-group-cell.header-ertragswert {
+    color: #243B5A !important;
+    font-weight: 700;
+    border-right: 1px solid #D5DCE4 !important;
+    border-bottom: 1px solid #FFFFFF !important;
+}
+
+.ag-theme-alpine .ag-header-cell.header-faelle-sub,
+.ag-theme-alpine .ag-header-cell.header-lueckentage-sub,
+.ag-theme-alpine .ag-header-cell.header-ertragswert-sub {
+    color: #243B5A !important;
+    font-weight: 600;
+    border-right: 1px solid #E1E6EB !important;
+}
+
+.ag-theme-alpine .header-datenstand .ag-header-cell-label,
+.ag-theme-alpine .header-faelle .ag-header-group-cell-label,
+.ag-theme-alpine .header-lueckentage .ag-header-group-cell-label,
+.ag-theme-alpine .header-ertragswert .ag-header-group-cell-label,
+.ag-theme-alpine .header-faelle-sub .ag-header-cell-label,
+.ag-theme-alpine .header-lueckentage-sub .ag-header-cell-label,
+.ag-theme-alpine .header-ertragswert-sub .ag-header-cell-label {
+    justify-content: center;
+    color: #243B5A !important;
+}

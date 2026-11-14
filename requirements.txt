@@ -1,0 +1,7 @@
+dash==4.1.0
+dash-ag-grid==33.3.3
+duckdb==1.5.1
+hdbcli>=2.22,<3
+numpy==2.4.4
+pandas==3.0.2
+plotly==6.6.0
