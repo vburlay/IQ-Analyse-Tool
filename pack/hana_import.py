@@ -49,10 +49,21 @@ def validate_raw_bestand(data: pd.DataFrame) -> pd.DataFrame:
     if missing_key.any(axis=None):
         raise HanaImportError("Der Fallschlüssel BWPKKD + Ankerbeginn enthält Leerwerte.")
 
-    ankerbeginn = pd.to_datetime(validated["/BIC/YBWRAVON"], errors="coerce")
-    erstes_ladedatum = pd.to_datetime(validated["/BIC/YBWRELAD"], errors="coerce")
-    if ankerbeginn.isna().any() or erstes_ladedatum.isna().any():
-        raise HanaImportError("Ankerbeginn oder erstes Ladedatum enthält ungültige Werte.")
+    for column, label in (
+        ("/BIC/YBWRAVON", "Ankerbeginn"),
+        ("/BIC/YBWRELAD", "Erstes Ladedatum"),
+    ):
+        values = validated[column].astype("string").str.strip()
+        dates = pd.to_datetime(values, format="mixed", errors="coerce")
+        invalid_count = int(dates.isna().sum())
+        if invalid_count:
+            raise HanaImportError(
+                f"{label} ({column}): {invalid_count} fehlende oder ungültige Datumswerte."
+            )
+        validated[column] = dates.dt.date
+
+    ankerbeginn = validated["/BIC/YBWRAVON"]
+    erstes_ladedatum = validated["/BIC/YBWRELAD"]
     if (erstes_ladedatum < ankerbeginn).any():
         raise HanaImportError("Erstes Ladedatum liegt vor Ankerbeginn.")
 
