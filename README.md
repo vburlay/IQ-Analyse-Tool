@@ -40,9 +40,11 @@ SAP HANA -- Anmelden und aktualisieren --> DuckDB/raw_bestand --> Dash
 - Bei einem Fehler bleiben die lokalen Daten unverändert.
 - Es gibt keine automatische Erzeugung synthetischer Daten.
 
-Host, Port, Schema und Tabelle werden über `HANA_HOST`, `HANA_PORT`,
-`HANA_SCHEMA` und `HANA_TABLE` gesetzt, zum Beispiel in den Environment
-Variables einer PyCharm Run Configuration. Benutzername und Passwort werden
+Host, SQL-Port, Schema und Tabelle können in der Datei `hana.ini` im
+Projektordner unter `[hana]` gespeichert werden. Die Datei ist von Git
+ausgeschlossen. Die Umgebungsvariablen `HANA_HOST`, `HANA_PORT`,
+`HANA_SCHEMA` und `HANA_TABLE` haben Vorrang vor den entsprechenden
+Dateiwerten. Benutzername und Passwort werden
 nur in der Oberfläche eingegeben, nicht gespeichert und ausschließlich für
 den aktuellen Import verwendet.
 
@@ -102,8 +104,8 @@ python app.py
 
 Danach ist die Oberfläche unter `http://127.0.0.1:8050/` erreichbar.
 
-Vor dem ersten HANA-Import die vier Verbindungsparameter in der PyCharm Run
-Configuration setzen. Login und Passwort gehören nicht in Quellcode, YAML,
+Vor dem ersten HANA-Import die vier Verbindungsparameter in `hana.ini`
+oder in der Run Configuration setzen. Login und Passwort gehören nicht in Quellcode, YAML,
 `.env`, Notebook oder Git.
 
 ## Tests

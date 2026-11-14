@@ -1,4 +1,5 @@
 import os
+from configparser import ConfigParser
 from pathlib import Path
 
 # ============================================================
@@ -20,10 +21,13 @@ TABLE_RAW = "raw_bestand"
 
 # SAP HANA connection settings. Credentials are entered in the application
 # and are never stored in this file.
-HANA_HOST = os.getenv("HANA_HOST", "")
-HANA_PORT = int(os.getenv("HANA_PORT", "0") or 0)
-HANA_SCHEMA = os.getenv("HANA_SCHEMA", "")
-HANA_TABLE = os.getenv("HANA_TABLE", "")
+hana_config = ConfigParser(interpolation=None)
+hana_config.read(BASE_DIR / "hana.ini", encoding="utf-8")
+
+HANA_HOST = os.getenv("HANA_HOST", hana_config.get("hana", "host", fallback=""))
+HANA_PORT = int(os.getenv("HANA_PORT", hana_config.get("hana", "port", fallback="")) or 0)
+HANA_SCHEMA = os.getenv("HANA_SCHEMA", hana_config.get("hana", "schema", fallback=""))
+HANA_TABLE = os.getenv("HANA_TABLE", hana_config.get("hana", "table", fallback=""))
 
 RAW_BESTAND_COLUMNS = (
     "/BIC/YBWRIQIQ",
