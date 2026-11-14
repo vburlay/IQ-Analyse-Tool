@@ -19,17 +19,20 @@ class HanaImportTests(unittest.TestCase):
         values = {column: ["x"] for column in reversed(RAW_BESTAND_COLUMNS)}
         values["/BIC/YBWRAVON"] = ["2025-01-01"]
         values["/BIC/YBWRELAD"] = ["2025-02-01"]
+        values["/BIC/YBWRABIS"] = ["02.04.2025"]
         values["/BIC/YBWRFTAGE"] = ["10"]
         data = pd.DataFrame(values)
         result = validate_raw_bestand(data)
         self.assertEqual(list(result.columns), list(RAW_BESTAND_COLUMNS))
+        self.assertEqual(result["/BIC/YBWRABIS"].iloc[0].isoformat(), "2025-04-02")
 
     def test_validation_rejects_load_date_before_anchor_start(self):
         values = {column: ["x"] for column in RAW_BESTAND_COLUMNS}
         values["/BIC/YBWRAVON"] = ["2025-02-01"]
         values["/BIC/YBWRELAD"] = ["2025-01-01"]
+        values["/BIC/YBWRABIS"] = ["20250402"]
         values["/BIC/YBWRFTAGE"] = ["10"]
-        with self.assertRaises(HanaImportError):
+        with self.assertRaisesRegex(HanaImportError, "liegt vor Ankerbeginn"):
             validate_raw_bestand(pd.DataFrame(values))
 
     def test_clear_replaces_database_with_empty_raw_table(self):

@@ -52,9 +52,14 @@ def validate_raw_bestand(data: pd.DataFrame) -> pd.DataFrame:
     for column, label in (
         ("/BIC/YBWRAVON", "Ankerbeginn"),
         ("/BIC/YBWRELAD", "Erstes Ladedatum"),
+        ("/BIC/YBWRABIS", "Ankerende"),
     ):
         values = validated[column].astype("string").str.strip()
-        dates = pd.to_datetime(values, format="mixed", errors="coerce")
+        dotted = values.str.fullmatch(r"\d{2}\.\d{2}\.\d{4}", na=False)
+        dates = pd.to_datetime(values.where(~dotted), format="mixed", errors="coerce")
+        dates.loc[dotted] = pd.to_datetime(
+            values.loc[dotted], format="%d.%m.%Y", errors="coerce"
+        )
         invalid_count = int(dates.isna().sum())
         if invalid_count:
             raise HanaImportError(
@@ -130,7 +135,11 @@ def _load_hana_frame(username: str, password: str) -> pd.DataFrame:
 
     columns_sql = ", ".join(_quote_identifier(column) for column in RAW_BESTAND_COLUMNS)
     source_sql = f"{_quote_identifier(HANA_SCHEMA)}.{_quote_identifier(HANA_TABLE)}"
-    query = f"SELECT {columns_sql} FROM {source_sql}"
+    query = f'''
+        SELECT {columns_sql}
+        FROM {source_sql}
+        WHERE "/BIC/YBWRSEL" = ? AND "/BIC/YBWRIQIQ" = ?
+    '''
 
     connection = None
     cursor = None
@@ -142,7 +151,7 @@ def _load_hana_frame(username: str, password: str) -> pd.DataFrame:
             password=password,
         )
         cursor = connection.cursor()
-        cursor.execute(query)
+        cursor.execute(query, ("4.15.1", "RSA"))
         frames: list[pd.DataFrame] = []
         while True:
             rows = cursor.fetchmany(10_000)
