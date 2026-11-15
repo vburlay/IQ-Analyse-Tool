@@ -225,10 +225,10 @@
 
 /* Forecast result table: calm two-level visual grouping. */
 .ag-theme-alpine .ag-header-cell.header-datenstand {
-    background-color: #E8EDF3 !important;
+    background-color: #FFE8D6 !important;
     color: #243B5A !important;
     font-weight: 700;
-    border-right: 1px solid #D5DCE4 !important;
+    border-right: 1px solid #EBCBB5 !important;
 }
 
 .ag-theme-alpine .ag-header-group-cell.header-faelle {
@@ -281,4 +281,9 @@
 .ag-theme-alpine .header-ertragswert-sub .ag-header-cell-label {
     justify-content: center;
     color: #243B5A !important;
+}
+
+.ag-theme-alpine .ag-row.forecast-current-run {
+    background-color: #fff4ce;
+    font-weight: 600;
 }

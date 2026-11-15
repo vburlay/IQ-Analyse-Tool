@@ -15,10 +15,12 @@ app.layout = html.Div(
         dcc.Store(id="active-tab-store", data="tab-monitoring"),
         dcc.Store(id="sidebar-collapsed-store", data=False),
         dcc.Store(id="data-version-store", data=0),
+        dcc.Store(id="current-forecast-run-id", storage_type="memory"),
         dcc.ConfirmDialog(
             id="confirm-clear-local-data",
             message=(
                 "Alle lokalen Daten in DuckDB werden endgültig gelöscht. "
+                "Dabei werden auch alle experimentellen Prognoseläufe gelöscht. "
                 "Die Tabellenstruktur bleibt erhalten. Fortfahren?"
             ),
         ),

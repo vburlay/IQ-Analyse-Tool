@@ -101,6 +101,8 @@ def calculate_stichtag_forecast(
     stichtag: str | None,
     intervallniveau: float | int = 80,
     year: int | str | None = "all",
+    *,
+    dataset: pd.DataFrame | None = None,
 ) -> dict:
     """Forecast cumulative cases and Lückentage for the anchor-year cohort."""
     empty = {
@@ -115,7 +117,7 @@ def calculate_stichtag_forecast(
     if not sachverhalt or not stichtag:
         return empty
 
-    df = prepare_anchor_forecast_plot_dataset(sachverhalt, year)
+    df = dataset if dataset is not None else prepare_anchor_forecast_plot_dataset(sachverhalt, year)
     if df.empty:
         return {**empty, "message": "Für den ausgewählten Sachverhalt sind keine Daten verfügbar."}
 
@@ -250,6 +252,8 @@ def calculate_stichtag_forecast(
         "lower": lower_point,
         "upper": upper_point,
         "calculation_date": last_date,
+        "data_cutoff": pd.Timestamp(df["data_cutoff"].max()).date()
+        if "data_cutoff" in df else last_date.date(),
         "current_value": last_actual,
         "future": future,
         "intervallniveau": int(level),

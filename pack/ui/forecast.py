@@ -1,10 +1,11 @@
 from typing import Optional
+from uuid import uuid4
 
 import pandas as pd
 import plotly.graph_objects as go
 from dash import html, dcc
 
-from pack.config import EURO_PER_LUECKENTAG
+from pack.forecast_runs import ALL_ANCHOR_YEARS, load_forecast_runs
 from pack.ui.styles import *
 from pack.ui.components import (
     section_title,
@@ -17,63 +18,58 @@ from pack.services.forecast_service import (
 )
 
 
-def forecast_detail_grid_data(
-    forecast_result: Optional[dict],
-):
-    if not forecast_result or forecast_result.get("forecast") is None:
-        return [], []
+CURRENT_RUN_MESSAGE = " (Die gelb markierte Zeile gehört zur Prognose in den Diagrammen.)"
 
-    calculation_date = pd.to_datetime(forecast_result.get("calculation_date"), errors="coerce")
-    date_text = "—" if pd.isna(calculation_date) else calculation_date.strftime("%d.%m.%Y")
 
-    def rounded_int(value: float) -> int:
-        return int(round(value))
-
-    def format_euro(value: int) -> str:
-        return f"{value:,}".replace(",", ".") + " €"
-
-    def format_number(value: int) -> str:
+def forecast_detail_grid_data(runs, current_run_id=None):
+    def format_number(value):
         return f"{value:,}".replace(",", ".")
 
-    current_cases = rounded_int(forecast_result["current_cases"])
-    forecast_cases = rounded_int(forecast_result["forecast_cases"])
-    expected_cases = forecast_cases - current_cases
+    def format_euro(value):
+        return f"{value:,.2f}".translate(str.maketrans(",.", ".,")) + " €"
 
-    current_days = rounded_int(forecast_result["current_value"])
-    forecast_days = rounded_int(forecast_result["forecast"])
-    expected_days = forecast_days - current_days
-    lower_days = rounded_int(forecast_result["lower"])
-    upper_days = rounded_int(forecast_result["upper"])
+    def interval(lower, upper, format_value):
+        if lower is None or upper is None:
+            return "—"
+        return f"{format_value(lower)} – {format_value(upper)}"
 
-    euro_rate = int(EURO_PER_LUECKENTAG)
-    current_ertrag = current_days * euro_rate
-    expected_ertrag = expected_days * euro_rate
-    forecast_ertrag = forecast_days * euro_rate
-    lower_ertrag = lower_days * euro_rate
-    upper_ertrag = upper_days * euro_rate
-    row = {
-            "Datenstand": date_text,
-            "FaelleAktuell": format_number(current_cases),
-            "FaelleNochErwartet": format_number(expected_cases),
-            "FaellePrognose": format_number(forecast_cases),
-            "LueckentageAktuell": format_number(current_days),
-            "LueckentageNochErwartet": format_number(expected_days),
-            "LueckentagePrognose": format_number(forecast_days),
-            "LueckentageIntervall": (
-                f"{format_number(lower_days)} – {format_number(upper_days)}"
-            ),
-            "ErtragAktuell": format_euro(current_ertrag),
-            "ErtragNochErwartet": format_euro(expected_ertrag),
-            "ErtragPrognose": format_euro(forecast_ertrag),
-            "Prognoseintervall": (
-                f"{format_euro(lower_ertrag)} – {format_euro(upper_ertrag)}"
-            ),
-    }
+    rows = [
+        {
+            "run_id": run.run_id,
+            "is_current": run.run_id == current_run_id,
+            "BerechnetAm": run.created_at.isoformat(sep=" ", timespec="seconds"),
+            "Datenstand": run.data_cutoff.strftime("%d.%m.%Y"),
+            "Stichtag": run.stichtag.strftime("%d.%m.%Y"),
+            "Ankerjahr": "all" if run.ankerjahr == ALL_ANCHOR_YEARS else run.ankerjahr,
+            "Sachverhalt": run.sachverhalt,
+            "Intervallniveau": f"{run.interval_level:.0%}",
+            "FaelleAktuell": format_number(run.cases_actual),
+            "FaelleNochErwartet": format_number(run.cases_expected),
+            "FaellePrognose": format_number(run.cases_forecast),
+            "FaelleIntervall": interval(run.cases_lower, run.cases_upper, format_number),
+            "LueckentageAktuell": format_number(run.days_actual),
+            "LueckentageNochErwartet": format_number(run.days_expected),
+            "LueckentagePrognose": format_number(run.days_forecast),
+            "LueckentageIntervall": interval(run.days_lower, run.days_upper, format_number),
+            "ErtragAktuell": format_euro(run.revenue_actual),
+            "ErtragNochErwartet": format_euro(run.revenue_expected),
+            "ErtragPrognose": format_euro(run.revenue_forecast),
+            "Prognoseintervall": interval(run.revenue_lower, run.revenue_upper, format_euro),
+        }
+        for run in runs
+    ]
     column_defs = [
-            {
-                "headerName": "Datenstand", "field": "Datenstand",
-                "minWidth": 155, "flex": 1, "headerClass": "header-datenstand",
-            },
+        *[
+            {"headerName": label, "field": field, "minWidth": width, "headerClass": "header-datenstand"}
+            for label, field, width in (
+                ("Berechnet am", "BerechnetAm", 185),
+                ("Datenstand", "Datenstand", 145),
+                ("Stichtag", "Stichtag", 125),
+                ("Ankerjahr", "Ankerjahr", 110),
+                ("Sachverhalt", "Sachverhalt", 125),
+                ("Intervallniveau", "Intervallniveau", 130),
+            )
+        ],
             {
                 "headerName": "Fälle",
                 "headerClass": "header-faelle",
@@ -81,6 +77,7 @@ def forecast_detail_grid_data(
                     {"headerName": "Aktuell", "field": "FaelleAktuell", "minWidth": 125, "flex": 1, "headerClass": "header-faelle-sub"},
                     {"headerName": "Noch erwartet", "field": "FaelleNochErwartet", "minWidth": 145, "flex": 1, "headerClass": "header-faelle-sub"},
                     {"headerName": "Zum Stichtag", "field": "FaellePrognose", "minWidth": 145, "flex": 1, "headerClass": "header-faelle-sub"},
+                    {"headerName": "Prognoseintervall", "field": "FaelleIntervall", "minWidth": 180, "wrapText": False, "autoHeight": False, "headerClass": "header-faelle-sub"},
                 ],
             },
             {
@@ -90,7 +87,7 @@ def forecast_detail_grid_data(
                     {"headerName": "Aktuell", "field": "LueckentageAktuell", "minWidth": 135, "flex": 1, "headerClass": "header-lueckentage-sub"},
                     {"headerName": "Noch erwartet", "field": "LueckentageNochErwartet", "minWidth": 155, "flex": 1, "headerClass": "header-lueckentage-sub"},
                     {"headerName": "Zum Stichtag", "field": "LueckentagePrognose", "minWidth": 155, "flex": 1, "headerClass": "header-lueckentage-sub"},
-                    {"headerName": "Prognoseintervall", "field": "LueckentageIntervall", "minWidth": 205, "flex": 1, "headerClass": "header-lueckentage-sub"},
+                    {"headerName": "Prognoseintervall", "field": "LueckentageIntervall", "minWidth": 205, "flex": 1, "wrapText": False, "autoHeight": False, "headerClass": "header-lueckentage-sub"},
                 ],
             },
             {
@@ -100,11 +97,11 @@ def forecast_detail_grid_data(
                     {"headerName": "Aktuell (€)", "field": "ErtragAktuell", "minWidth": 155, "flex": 1, "headerClass": "header-ertragswert-sub"},
                     {"headerName": "Noch erwartet (€)", "field": "ErtragNochErwartet", "minWidth": 185, "flex": 1, "headerClass": "header-ertragswert-sub"},
                     {"headerName": "Zum Stichtag (€)", "field": "ErtragPrognose", "minWidth": 180, "flex": 1, "headerClass": "header-ertragswert-sub"},
-                    {"headerName": "Prognoseintervall (€)", "field": "Prognoseintervall", "minWidth": 230, "flex": 1, "headerClass": "header-ertragswert-sub"},
+                    {"headerName": "Prognoseintervall (€)", "field": "Prognoseintervall", "minWidth": 340, "flex": 1, "wrapText": False, "autoHeight": False, "headerClass": "header-ertragswert-sub"},
                 ],
             },
     ]
-    return [row], column_defs
+    return rows, column_defs
 
 
 def prepare_anchor_forecast_display_data(
@@ -330,10 +327,11 @@ def render_forecast_tab():
         80,
         default_year,
     )
-    detail_rows, detail_cols = forecast_detail_grid_data(initial_result)
+    detail_rows, detail_cols = forecast_detail_grid_data(load_forecast_runs())
 
     return html.Div(
         [
+            dcc.Store(id="forecast-form-id", data=str(uuid4())),
             html.Div(
                 [
                     html.Div(
@@ -419,6 +417,7 @@ def render_forecast_tab():
                 ],
                 style=CONTROL_ROW_STYLE,
             ),
+            html.Div(id="forecast-calculation-message", role="alert"),
 
             html.Div(
                 [
@@ -456,12 +455,24 @@ def render_forecast_tab():
 
             html.Div(
                 [
-                    section_title("Ergebnistabelle"),
+                    html.Div(
+                        [
+                            "Prognosehistorie",
+                            html.Em(
+                                id="current-forecast-note",
+                                role="status",
+                                style={"fontSize": "0.8em", "fontWeight": "normal"},
+                            ),
+                        ],
+                        style=SUBTITLE_STYLE,
+                    ),
                     html.Div(
                         make_grid(
                             "forecast-detail-grid",
                             detail_rows,
                             detail_cols,
+                            row_class_rules={"forecast-current-run": "params.data && params.data.is_current"},
+                            get_row_id="params.data.run_id",
                         ),
                         style=CHART_CARD_STYLE,
                     ),

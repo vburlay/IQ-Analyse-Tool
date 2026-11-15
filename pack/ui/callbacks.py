@@ -1,4 +1,9 @@
+import logging
 import threading
+from collections import OrderedDict
+from datetime import date
+
+from pack.forecast_runs import ForecastRun, save_forecast_run
 
 from dash import ALL, Input, Output, State, ctx, html, no_update
 
@@ -11,6 +16,7 @@ from pack.ui.components import sidebar_button_style
 from pack.ui.forecast import (
     anchor_graph_components,
     forecast_detail_grid_data,
+    CURRENT_RUN_MESSAGE,
     render_forecast_tab,
 )
 from pack.ui.monitoring import build_monitoring_main_fig, render_monitoring_tab
@@ -26,6 +32,9 @@ SIDEBAR_ITEMS = [
 
 
 def register_callbacks(app):
+    forecast_lock = threading.Lock()
+    last_forecast_click = OrderedDict()
+
     @app.callback(
         Output("active-tab-store", "data"),
         Input({"type": "sidebar-tab", "index": ALL}, "n_clicks"),
@@ -70,13 +79,17 @@ def register_callbacks(app):
             titles.append(label)
         return children, styles, titles
 
-    @app.callback(Output("tabs-content", "children"), Input("active-tab-store", "data"))
+    @app.callback(
+        Output("tabs-content", "children"),
+        Output("current-forecast-run-id", "data"),
+        Input("active-tab-store", "data"),
+    )
     def render_tab(tab):
         if tab == "tab-monitoring":
-            return render_monitoring_tab(get_refresh_state_fn=get_refresh_state)
+            return render_monitoring_tab(get_refresh_state_fn=get_refresh_state), None
         if tab == "tab-anchor-forecast":
-            return render_forecast_tab()
-        return html.Div(style=PAGE_STYLE)
+            return render_forecast_tab(), None
+        return html.Div(style=PAGE_STYLE), None
 
     @app.callback(
         Output("app-section-title", "children"),
@@ -164,21 +177,23 @@ def register_callbacks(app):
     @app.callback(
         Output("data-version-store", "data", allow_duplicate=True),
         Output("hana-login-message", "children", allow_duplicate=True),
+        Output("current-forecast-run-id", "data", allow_duplicate=True),
         Input("confirm-clear-local-data", "submit_n_clicks"),
         State("data-version-store", "data"),
         prevent_initial_call=True,
     )
     def clear_local_data(submit_n_clicks, current_version):
         if not submit_n_clicks:
-            return no_update, no_update
-        clear_local_database()
+            return no_update, no_update, no_update
+        with forecast_lock:
+            clear_local_database()
         set_refresh_state(
             running=False,
             success=None,
             last_stand=None,
             message="Lokale DuckDB wurde vollständig geleert.",
         )
-        return (current_version or 0) + 1, "Lokale DuckDB wurde vollständig geleert."
+        return (current_version or 0) + 1, "Lokale DuckDB wurde vollständig geleert.", None
 
     @app.callback(
         Output("monitoring-stand-line", "children", allow_duplicate=True),
@@ -245,32 +260,70 @@ def register_callbacks(app):
     @app.callback(
         Output("graph-forecast-container", "children"),
         Output("forecast-section-title", "children"),
-        Output("forecast-section-description", "children"),
         Output("forecast-detail-grid", "rowData"),
-        Output("forecast-detail-grid", "columnDefs"),
+        Output("current-forecast-run-id", "data", allow_duplicate=True),
+        Output("current-forecast-note", "children"),
+        Output("forecast-calculation-message", "children"),
         Input("forecast-calculate-btn", "n_clicks"),
-        Input("active-tab-store", "data"),
-        Input("forecast-sachverhalt", "value"),
-        Input("forecast-year-filter", "value"),
+        State("forecast-form-id", "data"),
+        State("active-tab-store", "data"),
+        State("forecast-sachverhalt", "value"),
+        State("forecast-year-filter", "value"),
         State("forecast-stichtag", "date"),
         State("forecast-intervallniveau", "value"),
+        prevent_initial_call=True,
+        running=[(Output("forecast-calculate-btn", "disabled"), True, False)],
     )
-    def update_forecast_graph(
-        n_clicks, tab, sachverhalt, year, stichtag, intervallniveau,
-    ):
-        if tab != "tab-anchor-forecast" or not sachverhalt:
-            return tuple(no_update for _ in range(5))
-        df_local = prepare_anchor_forecast_plot_dataset(sachverhalt, year)
-        result = calculate_stichtag_forecast(
-            sachverhalt, stichtag, intervallniveau or 80, year,
-        )
-        rows, cols = forecast_detail_grid_data(result)
-        return (
-            anchor_graph_components(df_local, result, stichtag, year),
-            f"Prognose für Fälle mit Bezug zum Ankerjahr {year}",
-            "Eindeutige Fälle, deren Ankerzeitraum das ausgewählte Jahr überschneidet. "
-            "Die Zeitachse zeigt das erste Ladedatum. Illustrative Prognose auf Basis "
-            "der lokal gespeicherten Daten.",
-            rows,
-            cols,
-        )
+    def update_forecast_graph(n_clicks, form_id, tab, sachverhalt, year, stichtag, intervallniveau):
+        unchanged = (no_update,) * 5
+        if tab != "tab-anchor-forecast" or not n_clicks or not form_id:
+            return (*unchanged, no_update)
+
+        with forecast_lock:
+            if n_clicks <= last_forecast_click.get(form_id, 0):
+                return (*unchanged, no_update)
+            last_forecast_click[form_id] = n_clicks
+            last_forecast_click.move_to_end(form_id)
+            if len(last_forecast_click) > 1024:
+                last_forecast_click.popitem(last=False)
+
+            try:
+                target = date.fromisoformat(stichtag)
+                if not sachverhalt or year is None or intervallniveau not in (80, 90, 95):
+                    raise ValueError
+                if year != "all":
+                    year = int(year)
+                    if not 1 <= year <= 9999:
+                        raise ValueError
+            except (TypeError, ValueError):
+                return (*unchanged, "Bitte gültige Prognoseparameter eingeben.")
+
+            try:
+                dataset = prepare_anchor_forecast_plot_dataset(sachverhalt, year)
+                result = calculate_stichtag_forecast(
+                    sachverhalt, target.isoformat(), intervallniveau, year, dataset=dataset,
+                )
+                if result["forecast"] is None:
+                    return (*unchanged, result["message"])
+                if target <= result["data_cutoff"]:
+                    return (
+                        *unchanged,
+                        f"Der Stichtag muss nach dem Datenstand ({result['data_cutoff']:%d.%m.%Y}) liegen.",
+                    )
+
+                run = ForecastRun.from_result(result, target, year, sachverhalt)
+                graphs = anchor_graph_components(dataset, result, target.isoformat(), year)
+                history = save_forecast_run(run)
+                rows, _ = forecast_detail_grid_data(history, run.run_id)
+            except Exception:
+                logging.exception("Forecast calculation or persistence failed")
+                return (*unchanged, "Die Prognose konnte nicht berechnet oder gespeichert werden.")
+
+            return (
+                graphs,
+                f"Prognose für Fälle mit Bezug zum Ankerjahr {year}",
+                rows,
+                run.run_id,
+                CURRENT_RUN_MESSAGE,
+                "",
+            )

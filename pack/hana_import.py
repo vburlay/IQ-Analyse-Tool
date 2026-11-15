@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import os
 import re
-import tempfile
 from pathlib import Path
 
-import duckdb
 import pandas as pd
 
 from pack.config import (
@@ -17,6 +14,9 @@ from pack.config import (
     RAW_BESTAND_COLUMNS,
     TABLE_RAW,
 )
+
+from pack.data_access import database_connection
+from pack.forecast_runs import SCHEMA, clear_forecast_runs
 
 
 class HanaImportError(RuntimeError):
@@ -78,46 +78,47 @@ def validate_raw_bestand(data: pd.DataFrame) -> pd.DataFrame:
     return validated
 
 
-def _write_replacement_database(data: pd.DataFrame) -> None:
-    target = Path(DB_PATH)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    file_descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{target.stem}-", suffix=".db", dir=target.parent
-    )
-    os.close(file_descriptor)
-    temporary_path = Path(temporary_name)
-    temporary_path.unlink()
-    try:
-        connection = duckdb.connect(str(temporary_path))
+def _replace_raw_data(data: pd.DataFrame) -> None:
+    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+    with database_connection(path=DB_PATH) as connection:
+        connection.begin()
         try:
             connection.register("raw_bestand_import", data)
             connection.execute(
-                f'CREATE TABLE "{TABLE_RAW}" AS SELECT * FROM raw_bestand_import'
+                f'CREATE OR REPLACE TABLE "{TABLE_RAW}" AS SELECT * FROM raw_bestand_import'
             )
             imported = connection.execute(
                 f'SELECT COUNT(*) FROM "{TABLE_RAW}"'
             ).fetchone()[0]
             if imported != len(data):
                 raise HanaImportError("Die lokale Datenprüfung ist fehlgeschlagen.")
-            connection.execute("CHECKPOINT")
-        finally:
-            connection.close()
-        os.replace(temporary_path, target)
-    finally:
-        temporary_path.unlink(missing_ok=True)
+            connection.execute(SCHEMA)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
 
 
 def ensure_local_database() -> bool:
-    """Create a structurally valid but empty local database if none exists."""
-    if Path(DB_PATH).is_file():
-        return True
-    _write_replacement_database(_empty_raw_bestand_frame())
+    if not Path(DB_PATH).is_file():
+        _replace_raw_data(_empty_raw_bestand_frame())
+    else:
+        with database_connection(path=DB_PATH) as connection:
+            connection.execute(SCHEMA)
     return True
 
 
 def clear_local_database() -> None:
-    """Replace DuckDB with a new database containing an empty raw_bestand."""
-    _write_replacement_database(_empty_raw_bestand_frame())
+    ensure_local_database()
+    with database_connection(path=DB_PATH) as connection:
+        connection.begin()
+        try:
+            connection.execute(f'DELETE FROM "{TABLE_RAW}"')
+            clear_forecast_runs(connection)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
 
 
 def _load_hana_frame(username: str, password: str) -> pd.DataFrame:
@@ -177,5 +178,5 @@ def _load_hana_frame(username: str, password: str) -> pd.DataFrame:
 def refresh_from_hana(username: str, password: str) -> int:
     """Load HANA data and atomically replace local raw_bestand on success."""
     fresh_data = validate_raw_bestand(_load_hana_frame(username, password))
-    _write_replacement_database(fresh_data)
+    _replace_raw_data(fresh_data)
     return len(fresh_data)

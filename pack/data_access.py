@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+from threading import RLock
 import time
 from typing import Any, Optional
 
@@ -12,6 +14,15 @@ from pack.config import (
     DB_RETRY_DELAY,
     TABLE_RAW,
 )
+
+
+DATABASE_LOCK = RLock()
+
+
+@contextmanager
+def database_connection(*, read_only=False, path=None):
+    with DATABASE_LOCK, duckdb.connect(path or DB_PATH, read_only=read_only) as connection:
+        yield connection
 
 
 def duck_query_df(
@@ -27,19 +38,12 @@ def duck_query_df(
     last_error: Optional[Exception] = None
 
     for _ in range(retries):
-        con = None
         try:
-            con = duckdb.connect(DB_PATH, read_only=read_only)
-            return con.execute(sql, params or []).df()
+            with database_connection(read_only=read_only) as connection:
+                return connection.execute(sql, params or []).df()
         except Exception as exc:
             last_error = exc
             time.sleep(delay)
-        finally:
-            if con is not None:
-                try:
-                    con.close()
-                except Exception:
-                    pass
 
     if last_error is not None:
         raise last_error
@@ -107,6 +111,7 @@ def load_anchor_cohort_weekly_data(
             bw_case_id,
             ankerbeginn,
             ANY_VALUE(erstes_ladedatum) AS erstes_ladedatum,
+            MAX(erstes_ladedatum) AS latest_load_date,
             ARG_MAX(lueckentage, ipl_datum) AS lueckentage
         FROM selected
         GROUP BY bw_case_id, ankerbeginn
@@ -117,7 +122,8 @@ def load_anchor_cohort_weekly_data(
             '%Y-%m-%d'
         ) AS IPL,
         SUM(lueckentage) AS TAGEN,
-        COUNT(*) AS FAELLE
+        COUNT(*) AS FAELLE,
+        MAX(latest_load_date) AS data_cutoff
     FROM latest_cases
     GROUP BY 1
     ORDER BY 1

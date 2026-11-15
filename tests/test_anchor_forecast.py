@@ -1,4 +1,7 @@
 import unittest
+from datetime import date
+
+from pack.forecast_runs import ForecastRun
 
 import pandas as pd
 
@@ -170,7 +173,9 @@ class AnchorForecastTests(unittest.TestCase):
 
     def test_result_table_expected_values_and_euro_consistency(self):
         result = {
-            "calculation_date": "2026-10-29",
+            "data_cutoff": date(2026, 10, 29),
+            "intervallniveau": 80,
+            "case_future": pd.DataFrame({"lower": [1250.4], "upper": [1350.8]}),
             "current_cases": 1_234.4,
             "forecast_cases": 1_300.6,
             "current_value": 10_000.4,
@@ -178,9 +183,13 @@ class AnchorForecastTests(unittest.TestCase):
             "lower": 9_900.4,
             "upper": 10_300.6,
         }
-        rows, columns = forecast_detail_grid_data(result)
+        run = ForecastRun.from_result(result, date(2027, 2, 28), 2026, "000")
+        rows, columns = forecast_detail_grid_data([run])
         row = rows[0]
         number = self._parse_number
+
+        def euro(value):
+            return number(value.replace(",00", ""))
 
         current_cases = number(row["FaelleAktuell"])
         expected_cases = number(row["FaelleNochErwartet"])
@@ -192,9 +201,9 @@ class AnchorForecastTests(unittest.TestCase):
         target_days = number(row["LueckentagePrognose"])
         self.assertEqual(current_days + expected_days, target_days)
 
-        current_euro = number(row["ErtragAktuell"])
-        expected_euro = number(row["ErtragNochErwartet"])
-        target_euro = number(row["ErtragPrognose"])
+        current_euro = euro(row["ErtragAktuell"])
+        expected_euro = euro(row["ErtragNochErwartet"])
+        target_euro = euro(row["ErtragPrognose"])
         self.assertEqual(current_euro, current_days * 11)
         self.assertEqual(expected_euro, expected_days * 11)
         self.assertEqual(target_euro, target_days * 11)
@@ -204,7 +213,7 @@ class AnchorForecastTests(unittest.TestCase):
             number, row["LueckentageIntervall"].split(" – ")
         )
         lower_euro, upper_euro = map(
-            number, row["Prognoseintervall"].split(" – ")
+            euro, row["Prognoseintervall"].split(" – ")
         )
         self.assertEqual(lower_euro, lower_days * 11)
         self.assertEqual(upper_euro, upper_days * 11)
@@ -212,7 +221,7 @@ class AnchorForecastTests(unittest.TestCase):
         groups = {column["headerName"]: column for column in columns[1:]}
         self.assertEqual(
             [child["headerName"] for child in groups["Fälle"]["children"]],
-            ["Aktuell", "Noch erwartet", "Zum Stichtag"],
+            ["Aktuell", "Noch erwartet", "Zum Stichtag", "Prognoseintervall"],
         )
         self.assertEqual(
             [child["headerName"] for child in groups["Lückentage"]["children"]],

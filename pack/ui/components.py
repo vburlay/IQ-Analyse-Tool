@@ -36,6 +36,8 @@ def make_grid(
     column_defs=None,
     width="100%",
     auto_height: bool = False,
+    row_class_rules=None,
+    get_row_id=None,
 ):
     grid_options = {
         "animateRows": True,
@@ -59,6 +61,8 @@ def make_grid(
             "autoHeight": True,
         },
         dashGridOptions=grid_options,
+        **({"rowClassRules": row_class_rules} if row_class_rules else {}),
+        **({"getRowId": get_row_id} if get_row_id else {}),
         columnSize="sizeToFit",
         style={
             "width": width,

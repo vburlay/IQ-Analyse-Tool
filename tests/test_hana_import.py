@@ -35,12 +35,13 @@ class HanaImportTests(unittest.TestCase):
         with self.assertRaisesRegex(HanaImportError, "liegt vor Ankerbeginn"):
             validate_raw_bestand(pd.DataFrame(values))
 
-    def test_clear_replaces_database_with_empty_raw_table(self):
+    def test_clear_preserves_empty_raw_table_schema(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "cache.db"
             connection = duckdb.connect(str(database))
-            connection.execute("CREATE TABLE raw_bestand(value INTEGER)")
-            connection.execute("INSERT INTO raw_bestand VALUES (1)")
+            columns_sql = ", ".join(f'"{column}" VARCHAR' for column in RAW_BESTAND_COLUMNS)
+            connection.execute(f"CREATE TABLE raw_bestand({columns_sql})")
+            connection.execute("INSERT INTO raw_bestand DEFAULT VALUES")
             connection.close()
 
             with patch("pack.hana_import.DB_PATH", str(database)):
