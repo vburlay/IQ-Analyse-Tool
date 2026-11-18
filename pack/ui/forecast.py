@@ -40,7 +40,7 @@ def forecast_detail_grid_data(runs, current_run_id=None):
             "BerechnetAm": run.created_at.isoformat(sep=" ", timespec="seconds"),
             "Datenstand": run.data_cutoff.strftime("%d.%m.%Y"),
             "Stichtag": run.stichtag.strftime("%d.%m.%Y"),
-            "Ankerjahr": "all" if run.ankerjahr == ALL_ANCHOR_YEARS else run.ankerjahr,
+            "Ankerjahr": "all" if run.ankerjahr == ALL_ANCHOR_YEARS else str(run.ankerjahr),
             "Sachverhalt": run.sachverhalt,
             "Intervallniveau": f"{run.interval_level:.0%}",
             "FaelleAktuell": format_number(run.cases_actual),
@@ -60,7 +60,8 @@ def forecast_detail_grid_data(runs, current_run_id=None):
     ]
     column_defs = [
         *[
-            {"headerName": label, "field": field, "minWidth": width, "headerClass": "header-datenstand"}
+            {"headerName": label, "field": field, "minWidth": width,
+             "headerClass": "header-datenstand", "cellDataType": "text"}
             for label, field, width in (
                 ("Berechnet am", "BerechnetAm", 185),
                 ("Datenstand", "Datenstand", 145),
@@ -450,6 +451,19 @@ def render_forecast_tab():
                         },
                     ),
                 ],
+                style=SECTION_STYLE,
+            ),
+
+            html.Details(
+                [
+                    html.Summary(
+                        "Neue Fälle mit auffälligen Lückentagen",
+                        style={**SUBTITLE_STYLE, "cursor": "pointer"},
+                    ),
+                    html.Div(id="forecast-severity-content", style=CHART_CARD_STYLE),
+                ],
+                id="forecast-severity-details",
+                open=False,
                 style=SECTION_STYLE,
             ),
 

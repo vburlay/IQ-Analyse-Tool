@@ -1,3 +1,4 @@
+from pack.ui.anomalies import build_severity_section
 import logging
 import threading
 from collections import OrderedDict
@@ -118,20 +119,29 @@ def register_callbacks(app):
     def start_data_refresh(n_clicks, active_tab, username, password):
         if active_tab != "tab-monitoring" or not n_clicks:
             return True, ""
-        if get_refresh_state()["running"]:
-            return False, ""
-        if not username or not password:
-            set_refresh_state(
-                running=False,
-                success=False,
-                message="Bitte HANA-Benutzer und Passwort eingeben.",
+        with forecast_lock:
+            if get_refresh_state()["running"]:
+                return False, ""
+            if not username or not password:
+                set_refresh_state(
+                    success=False,
+                    message="Bitte HANA-Benutzer und Passwort eingeben.",
+                )
+                return False, ""
+            worker = threading.Thread(
+                target=run_hana_refresh,
+                args=(username, password),
+                daemon=True,
             )
-            return False, ""
-        threading.Thread(
-            target=run_hana_refresh,
-            args=(username, password),
-            daemon=True,
-        ).start()
+            set_refresh_state(running=True)
+            try:
+                worker.start()
+            except RuntimeError:
+                set_refresh_state(
+                    running=False,
+                    success=False,
+                    message="Die SAP-HANA-Aktualisierung konnte nicht gestartet werden.",
+                )
         return False, ""
 
     @app.callback(
@@ -186,13 +196,15 @@ def register_callbacks(app):
         if not submit_n_clicks:
             return no_update, no_update, no_update
         with forecast_lock:
+            if get_refresh_state()["running"]:
+                return no_update, "Bitte warten Sie, bis die SAP-HANA-Aktualisierung abgeschlossen ist.", no_update
             clear_local_database()
-        set_refresh_state(
-            running=False,
-            success=None,
-            last_stand=None,
-            message="Lokale DuckDB wurde vollständig geleert.",
-        )
+            set_refresh_state(
+                running=False,
+                success=None,
+                last_stand=None,
+                message="Lokale DuckDB wurde vollständig geleert.",
+            )
         return (current_version or 0) + 1, "Lokale DuckDB wurde vollständig geleert.", None
 
     @app.callback(
@@ -200,9 +212,10 @@ def register_callbacks(app):
         Input("active-tab-store", "data"),
         Input("refresh-poll-interval", "n_intervals"),
         Input("monitoring-date-basis", "value"),
+        Input("data-version-store", "data"),
         prevent_initial_call=True,
     )
-    def refresh_stand_line_on_open(active_tab, n_intervals, date_basis):
+    def refresh_stand_line_on_open(active_tab, n_intervals, date_basis, _data_version):
         if active_tab != "tab-monitoring":
             return no_update
         state = get_refresh_state()
@@ -256,6 +269,21 @@ def register_callbacks(app):
                 else "Lückentage der im ausgewählten Jahr erstmals geladenen Datensätze. Orange Punkte kennzeichnen unvollständige Kalenderwochen."
             ),
         )
+
+    @app.callback(
+        Output("forecast-severity-content", "children"),
+        Input("forecast-sachverhalt", "value"),
+        Input("forecast-year-filter", "value"),
+        Input("data-version-store", "data"),
+    )
+    def update_severity_section(sachverhalt, year, _version):
+        if not sachverhalt or year is None:
+            return "Bitte Ankerjahr und Sachverhalt auswählen."
+        try:
+            return build_severity_section(sachverhalt, year)
+        except Exception:
+            logging.exception("Weekly case severity diagnostics failed")
+            return "Die Auffälligkeiten konnten nicht geladen werden."
 
     @app.callback(
         Output("graph-forecast-container", "children"),

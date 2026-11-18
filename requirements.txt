@@ -5,3 +5,7 @@ hdbcli>=2.22,<3
 numpy==2.4.4
 pandas==3.0.2
 plotly==6.6.0
+
+matplotlib>=3.9,<4
+seaborn>=0.13.2,<0.14
+statsmodels>=0.14,<0.15
