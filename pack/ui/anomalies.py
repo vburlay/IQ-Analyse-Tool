@@ -105,6 +105,7 @@ def build_severity_section(sachverhalt, year, start=None, end=None):
     rows = []
     for week, row in flagged.sort_index(ascending=False).iterrows():
         rows.append({
+            "week_id": week.strftime("%Y-%m-%d"),
             "week": week.strftime("%d.%m.%Y"),
             "cases": int(row["cases"]), "days": round(row["days"], 2),
             "mean": round(row["mean"], 2), "median": round(row["median"], 2),
@@ -118,8 +119,8 @@ def build_severity_section(sachverhalt, year, start=None, end=None):
         for field, label, width in [
             ("week", "Woche ab", 130), ("cases", "Neue Fälle", 120),
             ("days", "Lückentage neuer Fälle", 180),
-            ("mean", "Durchschnittliche Lückentage je neuem Fall", 240),
-            ("mean_revenue", "Durchschnittlicher Ertragswert je neuem Fall (€)", 260),
+            ("mean", "AVG Tage je Fall", 140),
+            ("mean_revenue", "AVG Ertrag je Fall (€)", 165),
             ("share", "Größter Fall (%)", 150),
             ("largest", "Lückentage größter Fall", 180),
         ]
@@ -138,7 +139,8 @@ def build_severity_section(sachverhalt, year, start=None, end=None):
             "Die Tabelle zeigt die betroffenen Wochen und den Beitrag des größten Falls.",
             className="severity-description",
         ),
-        dcc.Graph(figure=fig, config={"displaylogo": False, "displayModeBar": "hover"}),
+        dcc.Graph(id="forecast-severity-graph", figure=fig,
+                  config={"displaylogo": False, "displayModeBar": "hover"}),
         html.Details([
             html.Summary("Wie werden die orangefarbenen Punkte bestimmt?"),
             html.P(
@@ -150,6 +152,7 @@ def build_severity_section(sachverhalt, year, start=None, end=None):
 
             ),
         ], style={"marginBottom": "12px"}),
-        make_grid("forecast-severity-grid", rows, columns, auto_height=True)
+        make_grid("forecast-severity-grid", rows, columns, auto_height=True,
+                  get_row_id="params.data.week_id")
         if rows else html.Div("Keine auffälligen Wochen nach dieser Regel."),
     ], className="severity-panel")

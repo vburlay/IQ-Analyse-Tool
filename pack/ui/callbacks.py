@@ -288,6 +288,30 @@ def register_callbacks(app):
             return "Die Auffälligkeiten konnten nicht geladen werden."
 
     @app.callback(
+        Output("forecast-severity-grid", "getRowStyle"),
+        Output("forecast-severity-grid", "scrollTo"),
+        Input("forecast-severity-graph", "clickData"),
+        State("forecast-severity-grid", "rowData"),
+        prevent_initial_call=True,
+    )
+    def highlight_severity_week(click_data, rows):
+        if not click_data or not click_data.get("points"):
+            return no_update, no_update
+        point = click_data["points"][0]
+        if point.get("curveNumber") != 1:
+            return no_update, no_update
+        week_id = str(point.get("x", ""))[:10]
+        if not any(row.get("week_id") == week_id for row in (rows or [])):
+            return no_update, no_update
+        return (
+            {"styleConditions": [{
+                "condition": f"params.data && params.data.week_id === '{date.fromisoformat(week_id).isoformat()}'",
+                "style": {"backgroundColor": "#fff4ce", "fontWeight": "600"},
+            }]},
+            {"rowId": week_id, "rowPosition": "middle"},
+        )
+
+    @app.callback(
         Output("graph-forecast-container", "children"),
         Output("forecast-section-title", "children"),
         Output("forecast-detail-grid", "rowData"),
