@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from dash import dcc, html
 
+from pack.config import EURO_PER_LUECKENTAG
 from pack.data_access import load_anchor_cohort_case_data
 from pack.ui.components import make_grid
 from pack.ui.styles import BG_COLOR
@@ -107,11 +108,10 @@ def build_severity_section(sachverhalt, year, start=None, end=None):
             "week": week.strftime("%d.%m.%Y"),
             "cases": int(row["cases"]), "days": round(row["days"], 2),
             "mean": round(row["mean"], 2), "median": round(row["median"], 2),
+            "mean_revenue": round(row["mean"] * EURO_PER_LUECKENTAG, 2),
             "share": round(row["largest_share"], 1),
             "largest": round(row["largest"], 2),
             "large_cases": int(row["large_cases"]),
-            "reason": "Ungewöhnlich hoher Wochenzuwachs",
-            "note": "Kleine Fallzahl" if row["cases"] < 10 else "Prüfung empfohlen",
         })
     columns = [
         {"headerName": label, "field": field, "minWidth": width}
@@ -119,11 +119,17 @@ def build_severity_section(sachverhalt, year, start=None, end=None):
             ("week", "Woche ab", 130), ("cases", "Neue Fälle", 120),
             ("days", "Lückentage neuer Fälle", 180),
             ("mean", "Durchschnittliche Lückentage je neuem Fall", 240),
+            ("mean_revenue", "Durchschnittlicher Ertragswert je neuem Fall (€)", 260),
             ("share", "Größter Fall (%)", 150),
             ("largest", "Lückentage größter Fall", 180),
-            ("reason", "Auffälligkeit", 190), ("note", "Hinweis", 180),
         ]
     ]
+    for column in columns:
+        if column["field"] == "mean_revenue":
+            column["valueFormatter"] = {
+                "function": "params.value == null ? '' : params.value.toLocaleString('de-DE', "
+                "{minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' €'"
+            }
     return html.Div([
         html.Div(f"Ankerjahr: {year} · Sachverhalt: {sachverhalt}", className="severity-selection"),
         html.P(
