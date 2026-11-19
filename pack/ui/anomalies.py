@@ -65,20 +65,21 @@ def build_severity_section(sachverhalt, year, start=None, end=None):
         "Woche ab %{x|%d.%m.%Y}<br>"
         "<b>Neue Lückentage: %{y:.0f}</b><br>"
         "Neue Fälle: %{customdata[0]:.0f}<br>"
+        "Durchschnittliche Lückentage je neuem Fall: %{customdata[2]:.1f}<br>"
         "Lückentage des größten Falls: %{customdata[1]:.0f}<extra></extra>"
     )
     fig.add_scatter(
         x=weekly.index, y=weekly["days"], mode="lines",
         line={"color": "#167c9c", "width": 2.4},
         name="Neue Lückentage je Woche", connectgaps=False,
-        customdata=weekly[["cases", "largest"]].to_numpy(), hovertemplate=hover,
+        customdata=weekly[["cases", "largest", "mean"]].to_numpy(), hovertemplate=hover,
     )
     points = weekly.loc[weekly["days_flagged"]]
     fig.add_scatter(
         x=points.index, y=points["days"], mode="markers",
         marker={"color": "#e88b35", "size": 11, "line": {"color": "#ffffff", "width": 2}},
         name="Ungewöhnlich hoher Zuwachs",
-        customdata=points[["cases", "largest"]].to_numpy(), hovertemplate=hover,
+        customdata=points[["cases", "largest", "mean"]].to_numpy(), hovertemplate=hover,
     )
     flagged = weekly.loc[weekly["flagged"]]
     visible_start = pd.Timestamp(start) if start is not None else weekly.index.min()
@@ -117,6 +118,7 @@ def build_severity_section(sachverhalt, year, start=None, end=None):
         for field, label, width in [
             ("week", "Woche ab", 130), ("cases", "Neue Fälle", 120),
             ("days", "Lückentage neuer Fälle", 180),
+            ("mean", "Durchschnittliche Lückentage je neuem Fall", 240),
             ("share", "Größter Fall (%)", 150),
             ("largest", "Lückentage größter Fall", 180),
             ("reason", "Auffälligkeit", 190), ("note", "Hinweis", 180),
