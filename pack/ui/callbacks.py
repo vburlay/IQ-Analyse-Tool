@@ -261,12 +261,12 @@ def register_callbacks(app):
             (
                 "Aktuelle Entwicklung der Lückentage je IPL"
                 if date_basis == "ipl"
-                else "Entwicklung nach erstem Ladedatum"
+                else "Lückentage nach Woche der ersten Ladung"
             ),
             (
                 "Periodenwert je IPL (nicht kumuliert). Der Wert kann zwischen zwei IPL-Terminen steigen oder sinken."
                 if date_basis == "ipl"
-                else "Lückentage der im ausgewählten Jahr erstmals geladenen Datensätze. Orange Punkte kennzeichnen unvollständige Kalenderwochen."
+                else "Ein Punkt zeigt die Lückentage der in dieser Woche erstmals geladenen Datensätze. Wochenwerte, nicht kumuliert. Wochen ohne Datensätze erscheinen als Lücken in der Linie."
             ),
         )
 

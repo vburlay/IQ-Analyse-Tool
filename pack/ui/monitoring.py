@@ -1,5 +1,6 @@
 from datetime import date
 
+import pandas as pd
 import plotly.graph_objects as go
 from dash import html, dcc
 
@@ -27,34 +28,40 @@ def build_monitoring_main_fig(
     if plot_df.empty:
         return fig
 
-    complete_weeks = plot_df[plot_df["Vollstaendige_Woche"]]
-    partial_weeks = plot_df[~plot_df["Vollstaendige_Woche"]]
-
-    fig.add_trace(
-        go.Scatter(
-            x=complete_weeks["x"],
-            y=complete_weeks["TAGEN"],
-            mode="lines+markers",
-            name="Vollständige Woche",
-            line=dict(width=3),
-            marker=dict(size=8),
+    if date_basis == "ipl":
+        fig.add_scatter(
+            x=plot_df["x"], y=plot_df["TAGEN"], mode="lines+markers",
+            name="Lückentage je IPL", line={"width": 3}, marker={"size": 8},
+            hovertemplate="IPL: %{x|%d.%m.%Y}<br>Lückentage: %{y:,.0f}<extra></extra>",
         )
-    )
-    if not partial_weeks.empty:
-        fig.add_trace(
-            go.Scatter(
-                x=partial_weeks["x"],
-                y=partial_weeks["TAGEN"],
-                customdata=partial_weeks[["Kalendertage"]],
-                mode="markers",
-                name="Unvollständige Woche",
-                marker=dict(size=12, color="#f28e2b", symbol="diamond"),
-                hovertemplate=(
-                    "Erstes Ladedatum: %{x|%d.%m.%Y}<br>"
-                    "Lückentage: %{y:,.0f}<br>"
-                    "Kalendertage: %{customdata[0]}<extra></extra>"
-                ),
-            )
+    else:
+        dates = pd.to_datetime(plot_df["x"])
+        week_start = dates.dt.to_period("W-SUN").dt.start_time
+        plot_df = plot_df.assign(week_start=week_start).set_index("week_start").reindex(
+            pd.date_range(week_start.min(), week_start.max(), freq="W-MON")
+        )
+        week_start = pd.Series(plot_df.index, index=plot_df.index)
+        selected_year = int(year) if year is not None else date.today().year
+        period_start = week_start.clip(lower=pd.Timestamp(selected_year, 1, 1))
+        period_end = (week_start + pd.Timedelta(days=6)).clip(
+            upper=pd.Timestamp(selected_year, 12, 31)
+        )
+        fig.add_scatter(
+            x=week_start + pd.Timedelta(days=3), y=plot_df["TAGEN"],
+            mode="lines+markers", connectgaps=False,
+            line={"color": ACCENT, "width": 2.5},
+            marker={"color": ACCENT, "size": 6}, name="Lückentage je Woche",
+            customdata=list(zip(
+                period_start.dt.strftime("%d.%m.%Y"),
+                period_end.dt.strftime("%d.%m.%Y"),
+                plot_df["Kalendertage"],
+            )),
+            hovertemplate=(
+                "Zeitraum: %{customdata[0]} – %{customdata[1]}<br>"
+                "<b>Lückentage: %{y:,.0f}</b><br>"
+                "Tage mit erstmals geladenen Datensätzen: %{customdata[2]}"
+                "<extra></extra>"
+            ),
         )
 
     fig.update_layout(
@@ -64,7 +71,7 @@ def build_monitoring_main_fig(
         plot_bgcolor=BG_COLOR,
         paper_bgcolor=BG_COLOR,
         margin=dict(t=60, b=60, l=80, r=50),
-        showlegend=not partial_weeks.empty,
+        showlegend=False,
         legend=dict(
             orientation="h",
             x=1,
@@ -78,7 +85,7 @@ def build_monitoring_main_fig(
         title_text=(
             "Lückentage je IPL"
             if date_basis == "ipl"
-            else "Erstmals geladene Lückentage"
+            else "Lückentage je Woche"
         ),
         title_font=dict(size=20),
         tickfont=dict(size=15),
@@ -87,7 +94,7 @@ def build_monitoring_main_fig(
         zeroline=False,
     )
     fig.update_xaxes(
-        title_text="IPL-Datum" if date_basis == "ipl" else "Erstes Ladedatum",
+        title_text="IPL-Datum" if date_basis == "ipl" else "Woche der ersten Ladung",
         title_font=dict(size=20),
         tickfont=dict(size=15),
         tickangle=-35,
@@ -256,7 +263,7 @@ def render_monitoring_tab(get_refresh_state_fn):
                     html.Div(
                         "Aktuelle Entwicklung der Lückentage je IPL"
                         if date_basis == "ipl"
-                        else "Entwicklung nach erstem Ladedatum",
+                        else "Lückentage nach Woche der ersten Ladung",
                         id="monitoring-chart-title",
                         style=SUBTITLE_STYLE,
                     ),
@@ -264,7 +271,7 @@ def render_monitoring_tab(get_refresh_state_fn):
                         (
                             "Periodenwert je IPL (nicht kumuliert). Der Wert kann zwischen zwei IPL-Terminen steigen oder sinken."
                             if date_basis == "ipl"
-                            else "Lückentage der im ausgewählten Jahr erstmals geladenen Datensätze. Orange Punkte kennzeichnen unvollständige Kalenderwochen."
+                            else "Ein Punkt zeigt die Lückentage der in dieser Woche erstmals geladenen Datensätze. Wochenwerte, nicht kumuliert. Wochen ohne Datensätze erscheinen als Lücken in der Linie."
                         ),
                         id="monitoring-chart-description",
                         style={
