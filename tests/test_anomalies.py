@@ -45,7 +45,7 @@ class SeverityTests(unittest.TestCase):
         self.assertTrue(result.loc[dates[1], "flagged"])
         self.assertFalse(result.loc[dates[11], "mean_flagged"])
         self.assertTrue(result.loc[dates[11], "case_flagged"])
-        self.assertEqual(int(result["flagged"].sum()), 2)
+        self.assertEqual(int(result["flagged"].sum()), 1)
 
     def test_large_individual_case_is_visible_when_weekly_mean_is_ordinary(self):
         dates = pd.date_range("2025-01-06", periods=12, freq="W-MON")
@@ -67,3 +67,13 @@ class SeverityTests(unittest.TestCase):
         })
         result = weekly_case_severity(cases)
         self.assertTrue(pd.isna(result.loc["2025-01-13", "mean"]))
+
+    def test_large_case_does_not_mark_ordinary_weekly_total(self):
+        dates = pd.date_range("2025-01-06", periods=12, freq="W-MON")
+        rows = []
+        for index, week in enumerate(dates):
+            days = [100] + [0] * 9 if index == 6 else [10] * 10
+            rows.extend({"erstes_ladedatum": week, "lueckentage": value} for value in days)
+        result = weekly_case_severity(pd.DataFrame(rows))
+        self.assertTrue(result.loc[dates[6], "case_flagged"])
+        self.assertFalse(result["flagged"].any())
