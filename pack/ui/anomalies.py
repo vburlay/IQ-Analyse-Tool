@@ -1,7 +1,7 @@
 """Exploratory weekly severity diagnostics for the selected forecast cohort."""
 
 import pandas as pd
-import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from dash import dcc, html
 
 from pack.data_access import load_anchor_cohort_case_data
@@ -37,7 +37,20 @@ def weekly_case_severity(cases, start=None, end=None):
     q1, q3 = reference.quantile([.25, .75])
     weekly["reference"] = reference.median()
     weekly["upper"] = q3 + 3.0 * (q3 - q1) if len(reference) >= 4 else float("nan")
-    weekly["flagged"] = weekly["mean"].gt(weekly["upper"]) & weekly["complete"]
+    weekly["mean_flagged"] = weekly["mean"].gt(weekly["upper"]) & weekly["complete"]
+    totals = weekly.loc[weekly["complete"], "days"].dropna()
+    total_q1, total_q3 = totals.quantile([.25, .75])
+    weekly["days_upper"] = (
+        total_q3 + 3.0 * (total_q3 - total_q1) if len(totals) >= 4 else float("nan")
+    )
+    weekly["days_flagged"] = weekly["days"].gt(weekly["days_upper"]) & weekly["complete"]
+    case_q1, case_q3 = data["lueckentage"].quantile([.25, .75])
+    case_upper = case_q3 + 3.0 * (case_q3 - case_q1)
+    data["large_case"] = data["lueckentage"].gt(case_upper) & data["lueckentage"].notna()
+    weekly["large_cases"] = data.groupby("week")["large_case"].sum().reindex(weekly.index).fillna(0).astype(int)
+    weekly["case_flagged"] = weekly["large_cases"].gt(0)
+    weekly["flagged"] = weekly["mean_flagged"] | weekly["days_flagged"] | weekly["case_flagged"]
+    weekly["volume_flagged"] = weekly["days_flagged"] | weekly["case_flagged"]
     return weekly
 
 
@@ -47,51 +60,74 @@ def build_severity_section(sachverhalt, year, start=None, end=None):
     if weekly.empty:
         return html.Div("Für diese Auswahl sind keine Falldaten verfügbar.")
 
-    fig = go.Figure()
+    fig = make_subplots(
+        rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.16,
+        subplot_titles=("Neue Lückentage je Woche", "Durchschnitt je neuem Fall"),
+    )
+    customdata = weekly[["cases", "days", "mean", "large_cases", "largest"]].to_numpy()
     hover = (
         "Woche ab %{x|%d.%m.%Y}<br>"
-        "<b>%{y:.1f} Lückentage je neuem Fall</b><br>"
         "Neue Fälle: %{customdata[0]:.0f}<br>"
-        "Von neuen Fällen eingebrachte Lückentage: %{customdata[1]:.0f}<extra></extra>"
+        "Lückentage neuer Fälle: %{customdata[1]:.0f}<br>"
+        "Durchschnitt je neuem Fall: %{customdata[2]:.1f}<br>"
+        "Fälle mit auffällig vielen Tagen: %{customdata[3]:.0f}<br>"
+        "Lückentage des größten Falls: %{customdata[4]:.0f}<extra></extra>"
     )
-    fig.add_scatter(
-        x=weekly.index, y=weekly["mean"], mode="lines",
-        name="Durchschnitt je neuem Fall", line={"color": "#167c9c", "width": 2.8},
-        fill="tozeroy", fillcolor="rgba(22,124,156,0.07)",
-        connectgaps=False, customdata=weekly[["cases", "days"]].to_numpy(),
-        hovertemplate=hover,
-    )
+    for row_number, metric, flag_column in [
+        (1, "days", "volume_flagged"), (2, "mean", "mean_flagged"),
+    ]:
+        fig.add_scatter(
+            x=weekly.index, y=weekly[metric], mode="lines",
+            line={"color": "#167c9c", "width": 2.4},
+            connectgaps=False, customdata=customdata, hovertemplate=hover,
+            showlegend=False, row=row_number, col=1,
+        )
+        points = weekly.loc[weekly[flag_column]]
+        fig.add_scatter(
+            x=points.index, y=points[metric], mode="markers",
+            marker={"color": "#e88b35", "size": 10, "line": {"color": "#ffffff", "width": 2}},
+            name="Auffällige Woche", showlegend=row_number == 1,
+            customdata=points[["cases", "days", "mean", "large_cases", "largest"]].to_numpy(),
+            hovertemplate=hover, row=row_number, col=1,
+        )
     flagged = weekly.loc[weekly["flagged"]]
-    fig.add_scatter(
-        x=flagged.index, y=flagged["mean"], mode="markers",
-        marker={"color": "#e88b35", "size": 11, "line": {"color": "#ffffff", "width": 2}},
-        name="Auffällige Woche",
-        customdata=flagged[["cases", "days"]].to_numpy(), hovertemplate=hover,
+    visible_start = pd.Timestamp(start) if start is not None else weekly.index.min()
+    visible_end = min(pd.Timestamp(end), weekly.index.max()) if end is not None else weekly.index.max()
+    if visible_end <= visible_start:
+        visible_end = visible_start + pd.Timedelta(days=1)
+    fig.update_xaxes(
+        range=[visible_start, visible_end], showgrid=False, tickformat="%m.%Y",
+        nticks=7, showline=True, linecolor="#dce8ed",
     )
+    fig.update_xaxes(title_text="Woche der ersten Ladung", row=2, col=1)
+    fig.update_yaxes(rangemode="tozero", gridcolor="#cfdee3", zeroline=False)
+    fig.update_yaxes(title_text="Lückentage", row=1, col=1)
+    fig.update_yaxes(title_text="Tage je Fall", row=2, col=1)
     fig.update_layout(
-        template="plotly_white", height=390,
+        template="plotly_white", height=540,
         paper_bgcolor=BG_COLOR, plot_bgcolor=BG_COLOR,
-        font={"family": "Georgia, 'Times New Roman', serif", "color": "#304b5b", "size": 15},
+        font={"family": "Georgia, 'Times New Roman', serif", "color": "#304b5b", "size": 14},
         hovermode="closest",
-        hoverlabel={"bgcolor": "#f0f7f7", "bordercolor": "#b9d2da",
-                    "font": {"family": "Georgia, 'Times New Roman', serif",
-                             "color": "#243b4b", "size": 14}},
-        xaxis_title="Woche der ersten Ladung",
-        yaxis_title="Lückentage je neuem Fall (Durchschnitt)",
-        yaxis={"rangemode": "tozero", "gridcolor": "#cfdee3", "zeroline": False},
-        xaxis={"showgrid": False, "tickformat": "%d.%m.%Y", "nticks": 7,
-               "showline": True, "linecolor": "#dce8ed",
-               **({"range": [start, end]} if start is not None and end is not None else {})},
-        margin={"l": 65, "r": 25, "t": 60, "b": 55},
-        legend={"orientation": "h", "y": 1.16, "x": 0, "font": {"size": 12}},
+        margin={"l": 65, "r": 25, "t": 70, "b": 55},
+        legend={"orientation": "h", "y": 1.15, "x": 0},
     )
     rows = []
     for week, row in flagged.sort_index(ascending=False).iterrows():
+        reasons = []
+        if row["case_flagged"]:
+            reasons.append("Fall mit auffällig vielen Tagen")
+        if row["days_flagged"]:
+            reasons.append("Hohe Wochensumme")
+        if row["mean_flagged"]:
+            reasons.append("Hoher Durchschnitt")
         rows.append({
             "week": week.strftime("%d.%m.%Y"),
             "cases": int(row["cases"]), "days": round(row["days"], 2),
             "mean": round(row["mean"], 2), "median": round(row["median"], 2),
             "share": round(row["largest_share"], 1),
+            "largest": round(row["largest"], 2),
+            "large_cases": int(row["large_cases"]),
+            "reason": "; ".join(reasons),
             "note": "Kleine Fallzahl" if row["cases"] < 10 else "Prüfung empfohlen",
         })
     columns = [
@@ -100,17 +136,19 @@ def build_severity_section(sachverhalt, year, start=None, end=None):
             ("week", "Woche ab", 130), ("cases", "Neue Fälle", 120),
             ("days", "Lückentage neuer Fälle", 180), ("mean", "Durchschnitt je neuem Fall", 200),
             ("median", "Median je neuem Fall", 180), ("share", "Größter Fall (%)", 150),
-            ("note", "Hinweis", 180),
+            ("largest", "Lückentage größter Fall", 180),
+            ("large_cases", "Fälle mit auffällig vielen Tagen", 220),
+            ("reason", "Auffälligkeit", 190), ("note", "Hinweis", 180),
         ]
     ]
     return html.Div([
         html.Div(f"Ankerjahr: {year} · Sachverhalt: {sachverhalt}", className="severity-selection"),
         html.P(
-            "Neue Fälle bringen zusätzliche Lückentage mit. Die Linie zeigt, wie viele Tage "
-            "die erstmals geladenen Fälle einer Woche im Durchschnitt eingebracht haben. "
-            "Berechnung: Summe der Lückentage dieser neuen Fälle ÷ Anzahl dieser Fälle. "
-            "Orange markiert sind Wochen, deren neue Fälle im Durchschnitt ungewöhnlich viele "
-            "Lückentage mitgebracht haben.",
+            "Oben: die Lückentage, die neue Fälle je Woche mitgebracht haben. "
+            "Unten: die durchschnittlichen Lückentage je neuem Fall. "
+            "Orange Punkte oben markieren auch Wochen, in denen einzelne neue Fälle "
+            "auffällig viele Lückentage mitgebracht haben. Die Tabelle zeigt deren Anzahl "
+            "und die Lückentage des größten Falls.",
             className="severity-description",
         ),
         dcc.Graph(figure=fig, config={"displaylogo": False, "displayModeBar": "hover"}),
@@ -119,8 +157,11 @@ def build_severity_section(sachverhalt, year, start=None, end=None):
             html.P(
                 "Vergleich der tatsächlichen Wochen im Zeitraum der oberen Diagramme. "
                 "Bei mindestens 4 abgeschlossenen Wochen werden Werte über dem oberen Quartil plus "
-                "3 Quartilsabständen markiert. Dies sind Prüfhinweise. Die letzte möglicherweise unvollständige Woche "
-                "wird nicht markiert. Kleine Fallzahlen können den Durchschnitt stark verändern."
+                "3 Quartilsabständen markiert, getrennt für Wochensumme und Durchschnitt. "
+                "Zusätzlich werden einzelne Fälle mit derselben Quartilsregel verglichen. "
+                "Solche Fälle werden auch in der letzten Woche markiert; die Prüfung von "
+                "Wochensumme und Durchschnitt beschränkt sich auf abgeschlossene Wochen. "
+                "Die Markierungen sind Prüfhinweise."
             ),
         ], style={"marginBottom": "12px"}),
         make_grid("forecast-severity-grid", rows, columns, auto_height=True)
