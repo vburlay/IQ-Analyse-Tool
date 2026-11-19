@@ -6,6 +6,17 @@ from pack.ui.anomalies import weekly_case_severity
 
 
 class SeverityTests(unittest.TestCase):
+    def test_display_range_excludes_old_values_from_reference(self):
+        dates = pd.date_range("2024-12-02", periods=12, freq="W-MON")
+        cases = pd.DataFrame({
+            "erstes_ladedatum": dates.repeat(10),
+            "lueckentage": [900] * 50 + [10] * 50 + [100] * 10 + [10] * 10,
+        })
+        result = weekly_case_severity(cases, start=dates[5], end=dates[-1])
+        self.assertEqual(result.index.min(), dates[5])
+        self.assertEqual(result.loc[dates[10], "upper"], 10)
+        self.assertTrue(result.loc[dates[10], "flagged"])
+
     def test_jump_uses_whole_period_and_excludes_last_week(self):
         dates = pd.date_range("2025-01-06", periods=12, freq="W-MON")
         cases = pd.DataFrame({

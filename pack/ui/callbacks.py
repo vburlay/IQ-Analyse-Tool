@@ -272,15 +272,17 @@ def register_callbacks(app):
 
     @app.callback(
         Output("forecast-severity-content", "children"),
-        Input("forecast-sachverhalt", "value"),
-        Input("forecast-year-filter", "value"),
-        Input("data-version-store", "data"),
+        Input("graph-forecast-container", "children"),
+        State("forecast-sachverhalt", "value"),
+        State("forecast-year-filter", "value"),
     )
-    def update_severity_section(sachverhalt, year, _version):
+    def update_severity_section(graphs, sachverhalt, year):
         if not sachverhalt or year is None:
             return "Bitte Ankerjahr und Sachverhalt auswählen."
         try:
-            return build_severity_section(sachverhalt, year)
+            figure = graphs[0]["props"]["children"]["props"]["figure"]
+            start, end = figure["layout"]["xaxis"]["range"]
+            return build_severity_section(sachverhalt, year, start=start, end=end)
         except Exception:
             logging.exception("Weekly case severity diagnostics failed")
             return "Die Auffälligkeiten konnten nicht geladen werden."

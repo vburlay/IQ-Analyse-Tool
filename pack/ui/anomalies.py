@@ -9,11 +9,19 @@ from pack.ui.components import make_grid
 from pack.ui.styles import BG_COLOR
 
 
-def weekly_case_severity(cases):
+def weekly_case_severity(cases, start=None, end=None):
     if cases.empty:
         return pd.DataFrame()
     data = cases.copy()
     data["week"] = data["erstes_ladedatum"].dt.to_period("W-SUN").dt.start_time
+    cutoff = cases["erstes_ladedatum"].max()
+    if start is not None:
+        data = data.loc[data["week"] >= pd.Timestamp(start)]
+    if end is not None:
+        data = data.loc[data["week"] <= pd.Timestamp(end)]
+        cutoff = min(cutoff, pd.Timestamp(end))
+    if data.empty:
+        return pd.DataFrame()
     weekly = data.groupby("week").agg(
         cases=("lueckentage", "size"),
         days=("lueckentage", "sum"),
@@ -23,7 +31,6 @@ def weekly_case_severity(cases):
     weekly = weekly.reindex(pd.date_range(weekly.index.min(), weekly.index.max(), freq="W-MON"))
     weekly["mean"] = weekly["days"].div(weekly["cases"])
     weekly["largest_share"] = weekly["largest"].div(weekly["days"].replace(0, float("nan"))) * 100
-    cutoff = cases["erstes_ladedatum"].max()
     weekly["complete"] = weekly.index + pd.Timedelta(days=6) <= cutoff
     # Retrospective comparison across the displayed cohort, including later weeks.
     reference = weekly.loc[weekly["complete"], "mean"].dropna()
@@ -34,9 +41,9 @@ def weekly_case_severity(cases):
     return weekly
 
 
-def build_severity_section(sachverhalt, year):
+def build_severity_section(sachverhalt, year, start=None, end=None):
     cases = load_anchor_cohort_case_data(sachverhalt, year)
-    weekly = weekly_case_severity(cases)
+    weekly = weekly_case_severity(cases, start=start, end=end)
     if weekly.empty:
         return html.Div("Für diese Auswahl sind keine Falldaten verfügbar.")
 
@@ -73,7 +80,8 @@ def build_severity_section(sachverhalt, year):
         yaxis_title="Lückentage je neuem Fall (Durchschnitt)",
         yaxis={"rangemode": "tozero", "gridcolor": "#cfdee3", "zeroline": False},
         xaxis={"showgrid": False, "tickformat": "%d.%m.%Y", "nticks": 7,
-               "showline": True, "linecolor": "#dce8ed"},
+               "showline": True, "linecolor": "#dce8ed",
+               **({"range": [start, end]} if start is not None and end is not None else {})},
         margin={"l": 65, "r": 25, "t": 60, "b": 55},
         legend={"orientation": "h", "y": 1.16, "x": 0, "font": {"size": 12}},
     )
@@ -109,7 +117,7 @@ def build_severity_section(sachverhalt, year):
         html.Details([
             html.Summary("Wie werden die orangefarbenen Punkte bestimmt?"),
             html.P(
-                "Vergleich über den gesamten ausgewählten Zeitraum, einschließlich späterer Wochen. "
+                "Vergleich der tatsächlichen Wochen im Zeitraum der oberen Diagramme. "
                 "Bei mindestens 4 abgeschlossenen Wochen werden Werte über dem oberen Quartil plus "
                 "3 Quartilsabständen markiert. Dies sind Prüfhinweise. Die letzte möglicherweise unvollständige Woche "
                 "wird nicht markiert. Kleine Fallzahlen können den Durchschnitt stark verändern."
