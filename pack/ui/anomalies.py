@@ -131,6 +131,18 @@ def build_severity_section(sachverhalt, year, start=None, end=None):
                 "function": "params.value == null ? '' : params.value.toLocaleString('de-DE', "
                 "{minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' €'"
             }
+    raw_columns = [
+        {"headerName": column, "field": column, "minWidth": 190, "cellDataType": False}
+        for column in RAW_BESTAND_COLUMNS
+    ]
+    for column in raw_columns:
+        if column["field"] in {
+            "/BIC/YBWRAVON", "/BIC/YBWRELAD", "/BIC/YBWRABIS", "/BIC/YBWRIPL",
+        }:
+            column["valueFormatter"] = {
+                "function": "params.value == null ? '' : "
+                r"String(params.value).replace(/^(\d{4})-?(\d{2})-?(\d{2})(?:T.*| .*)?$/, '$3.$2.$1')"
+            }
     return html.Div([
         dcc.Store(id="forecast-anomaly-context", data={"year": year, "sachverhalt": sachverhalt}),
         html.Div(f"Ankerjahr: {year} · Sachverhalt: {sachverhalt}", className="severity-selection"),
@@ -160,10 +172,7 @@ def build_severity_section(sachverhalt, year, start=None, end=None):
             html.Summary("Bestand DSO", style={"cursor": "pointer", "marginTop": "16px"}),
             html.Div(id="forecast-anomaly-raw-message", role="status", style={"margin": "10px 0"}),
             make_grid(
-                "forecast-anomaly-raw-grid", [], [
-                    {"headerName": column, "field": column, "minWidth": 190, "cellDataType": False}
-                    for column in RAW_BESTAND_COLUMNS
-                ],
+                "forecast-anomaly-raw-grid", [], raw_columns,
             ),
         ], id="forecast-anomaly-raw-details", open=False),
     ], className="severity-panel")
