@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from dash import dcc, html
 
-from pack.config import EURO_PER_LUECKENTAG
+from pack.config import EURO_PER_LUECKENTAG, RAW_BESTAND_COLUMNS
 from pack.data_access import load_anchor_cohort_case_data
 from pack.ui.components import make_grid
 from pack.ui.styles import BG_COLOR
@@ -132,6 +132,7 @@ def build_severity_section(sachverhalt, year, start=None, end=None):
                 "{minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' €'"
             }
     return html.Div([
+        dcc.Store(id="forecast-anomaly-context", data={"year": year, "sachverhalt": sachverhalt}),
         html.Div(f"Ankerjahr: {year} · Sachverhalt: {sachverhalt}", className="severity-selection"),
         html.P(
             "Die Linie zeigt, wie viele zusätzliche Lückentage die neuen Fälle je Woche "
@@ -155,4 +156,14 @@ def build_severity_section(sachverhalt, year, start=None, end=None):
         make_grid("forecast-severity-grid", rows, columns, auto_height=True,
                   get_row_id="params.data.week_id")
         if rows else html.Div("Keine auffälligen Wochen nach dieser Regel."),
+        html.Details([
+            html.Summary("Bestand DSO", style={"cursor": "pointer", "marginTop": "16px"}),
+            html.Div(id="forecast-anomaly-raw-message", role="status", style={"margin": "10px 0"}),
+            make_grid(
+                "forecast-anomaly-raw-grid", [], [
+                    {"headerName": column, "field": column, "minWidth": 190, "cellDataType": False}
+                    for column in RAW_BESTAND_COLUMNS
+                ],
+            ),
+        ], id="forecast-anomaly-raw-details", open=False),
     ], className="severity-panel")

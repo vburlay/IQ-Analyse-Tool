@@ -261,3 +261,58 @@ def get_latest_ipl_value() -> str:
 
     dt = pd.to_datetime(str(value), format="%Y%m%d", errors="coerce")
     return str(dt.date()) if pd.notna(dt) else str(value)
+
+
+def load_anomaly_raw_records(week, anchor_year, sachverhalt, expected_cases, expected_days):
+    """Return unaggregated latest source records matching the selected weekly cohort.
+
+    Exact duplicate snapshots are represented once. Conflicting latest records
+    cannot be resolved from the graph context and are reported to the caller.
+    """
+    from pack.config import RAW_BESTAND_COLUMNS
+
+    week_start = pd.Timestamp(week).normalize()
+    if week_start.weekday() != 0:
+        raise ValueError("Die ausgewählte Anomalie muss eine Kalenderwoche bezeichnen.")
+    params = []
+    filters = []
+    if sachverhalt != "all":
+        filters.append('CAST("/BIC/YBWRSV" AS VARCHAR) = ?')
+        params.append(str(sachverhalt))
+    if anchor_year != "all":
+        year = int(anchor_year)
+        filters.extend([
+            'CAST("/BIC/YBWRAVON" AS DATE) <= CAST(? AS DATE)',
+            'CAST("/BIC/YBWRABIS" AS DATE) >= CAST(? AS DATE)',
+        ])
+        params.extend([f"{year}-12-31", f"{year}-01-01"])
+    columns = ", ".join(f'"{column}"' for column in RAW_BESTAND_COLUMNS)
+    where = " AND ".join(filters) or "TRUE"
+    source = duck_query_df(f'SELECT {columns} FROM {TABLE_RAW} WHERE {where}', params)
+    if source.empty:
+        raise ValueError("Die Daten wurden geändert. Bitte die Prognose erneut berechnen.")
+    keys = ["/B99/S_BWPKKD", "/BIC/YBWRAVON"]
+    source["_anchor"] = pd.to_datetime(source[keys[1]], errors="raise")
+    source["_load"] = pd.to_datetime(source["/BIC/YBWRELAD"], errors="raise")
+    source["_ipl"] = pd.to_datetime(source["/BIC/YBWRIPL"].astype(str), format="%Y%m%d", errors="raise")
+    group_keys = [keys[0], "_anchor"]
+    load_counts = source.groupby(group_keys)["_load"].transform("nunique")
+    in_week = source["_load"].ge(week_start) & source["_load"].lt(week_start + pd.Timedelta(days=7))
+    if (load_counts[in_week] > 1).any():
+        raise ValueError("Erstes Ladedatum ist je Fallschlüssel nicht eindeutig. Eine genaue Zuordnung ist nicht möglich.")
+    cohort = source.loc[in_week].copy()
+    latest = cohort.groupby(group_keys)["_ipl"].transform("max")
+    cohort = cohort.loc[cohort["_ipl"].eq(latest)]
+    result = cohort.loc[:, list(RAW_BESTAND_COLUMNS)].drop_duplicates()
+    if result.duplicated(keys).any():
+        raise ValueError(
+            "Mehrere unterschiedliche Rohdatensätze im letzten IPL je Fall. "
+            "Für eine eindeutige Auswahl fehlt ein zusätzlicher Quellschlüssel."
+        )
+    days = pd.to_numeric(result["/BIC/YBWRFTAGE"], errors="raise").sum()
+    if len(result) != int(expected_cases) or abs(float(days) - float(expected_days)) > 0.001:
+        raise ValueError(
+            "Rohdaten und ausgewählte Anomalie stimmen nicht überein. "
+            "Bitte die Prognose mit dem aktuellen Datenstand erneut berechnen."
+        )
+    return result

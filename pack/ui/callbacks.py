@@ -1,3 +1,4 @@
+from pack.data_access import load_anomaly_raw_records
 from pack.ui.anomalies import build_severity_section
 import logging
 import threading
@@ -290,25 +291,51 @@ def register_callbacks(app):
     @app.callback(
         Output("forecast-severity-grid", "getRowStyle"),
         Output("forecast-severity-grid", "scrollTo"),
+        Output("forecast-anomaly-raw-details", "open"),
+        Output("forecast-anomaly-raw-grid", "rowData"),
+        Output("forecast-anomaly-raw-message", "children"),
         Input("forecast-severity-graph", "clickData"),
         State("forecast-severity-grid", "rowData"),
+        State("forecast-anomaly-context", "data"),
         prevent_initial_call=True,
     )
-    def highlight_severity_week(click_data, rows):
+    def highlight_severity_week(click_data, rows, context):
         if not click_data or not click_data.get("points"):
-            return no_update, no_update
+            return (no_update,) * 5
         point = click_data["points"][0]
         if point.get("curveNumber") != 1:
-            return no_update, no_update
+            return (no_update,) * 5
         week_id = str(point.get("x", ""))[:10]
         if not any(row.get("week_id") == week_id for row in (rows or [])):
-            return no_update, no_update
+            return (no_update,) * 5
+        selected = next(row for row in rows if row["week_id"] == week_id)
+        try:
+            raw = load_anomaly_raw_records(
+                week_id, context["year"], context["sachverhalt"],
+                selected["cases"], selected["days"],
+            )
+            # JSON transport preserves source values, with dates serialized as ISO strings.
+            import json
+            raw_rows = json.loads(raw.to_json(orient="records", date_format="iso"))
+            message = (
+                f"Woche ab {selected['week']} · {len(raw_rows)} Fälle · "
+                f"{selected['days']:,.0f} Lückentage. "
+                "Originalspalten des letzten IPL je Fall; identische doppelte Zeilen einmal angezeigt."
+            )
+        except ValueError as exc:
+            raw_rows, message = [], str(exc)
+        except Exception:
+            logging.exception("Anomaly raw records could not be loaded")
+            raw_rows, message = [], "Die Rohdaten konnten nicht geladen werden."
         return (
             {"styleConditions": [{
                 "condition": f"params.data && params.data.week_id === '{date.fromisoformat(week_id).isoformat()}'",
                 "style": {"backgroundColor": "#fff4ce", "fontWeight": "600"},
             }]},
             {"rowId": week_id, "rowPosition": "middle"},
+            True,
+            raw_rows,
+            message,
         )
 
     @app.callback(
