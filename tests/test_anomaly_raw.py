@@ -72,5 +72,12 @@ class AnomalyRawTests(unittest.TestCase):
             {"year": 2025, "sachverhalt": "01a"},
         )
         self.assertTrue(result[2])
-        self.assertEqual(result[3], [self.row])
+        expected = {
+            **self.row,
+            "/BIC/YBWRIPL": "21.07.2025",
+            "/BIC/YBWRAVON": "01.01.2025",
+            "/BIC/YBWRABIS": "31.12.2025",
+            "/BIC/YBWRELAD": "15.07.2025",
+        }
+        self.assertEqual(result[3], [expected])
         self.assertIn("2025-07-14", result[0]["styleConditions"][0]["condition"])

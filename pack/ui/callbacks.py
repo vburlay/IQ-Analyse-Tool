@@ -1,3 +1,5 @@
+from pack.ui.quality import render_quality_tab, overview_content
+from pack.services.quality_service import load_quality_report
 from pack.data_access import load_anomaly_raw_records
 from pack.ui.anomalies import build_severity_section
 import logging
@@ -28,14 +30,127 @@ from pack.ui.styles import PAGE_STYLE, SIDEBAR_COLLAPSED_STYLE, SIDEBAR_STYLE
 
 
 SIDEBAR_ITEMS = [
-    ("tab-monitoring", "📊 Ladedatum-Analyse"),
-    ("tab-anchor-forecast", "📈 Ankerprognose"),
+    ("tab-monitoring", "📊 Analyse"),
+    ("tab-anchor-forecast", "📈 Prognose"),
+    ("tab-quality", "🔎 Datenqualität"),
 ]
 
 
 def register_callbacks(app):
     forecast_lock = threading.Lock()
     last_forecast_click = OrderedDict()
+
+    @app.callback(
+        Output("quality-panel-overview", "style"),
+        Output("quality-panel-checks", "style"),
+        Output("quality-panel-raw", "style"),
+        Input("quality-subtab", "value"),
+    )
+    def show_quality_panel(selected):
+        return tuple({
+            "display": "block" if selected == name else "none",
+            "width": "100%", "boxSizing": "border-box", "padding": "22px",
+            "margin": "16px 0 24px", "backgroundColor": "#ffffff",
+            "border": "1px solid #d9e2ec", "borderRadius": "10px",
+        } for name in ("overview", "checks", "raw"))
+
+    @app.callback(
+        Output("quality-overview", "children"),
+        Output("quality-checks", "rowData"),
+        Output("quality-check-choice", "options"),
+        Output("quality-scope-note", "children"),
+        Input("quality-year", "data"),
+        Input("quality-sv", "data"),
+        Input("data-version-store", "data"),
+        State("active-tab-store", "data"),
+    )
+    def update_quality(year, sv, _version, tab):
+        if tab != "tab-quality":
+            return (no_update,) * 4
+        try:
+            report = load_quality_report(year, sv)
+            return (
+                overview_content(report), report.checks,
+                [{"label": f"{c['Prüfung']} ({c['Zeilen']} Zeilen)", "value": c["id"]} for c in report.checks],
+                "Geprüft werden alle bereitgestellten IQ-Daten. "
+                "Sachverhalte und Ankerbeginn-Jahre zeigen, wo die Hinweise auftreten. "
+                "Ein Fall kann mehrere Ankerjahre betreffen. Die angezeigten Jahre bezeichnen "
+                "den Beginn seines Ankerzeitraums. Die genauen Datumsangaben stehen unter Rohdaten.",
+            )
+        except Exception:
+            logging.exception("Data quality report failed")
+            return "Die Datenqualität konnte nicht geprüft werden.", [], [], ""
+
+    @app.callback(
+        Output("quality-check-choice", "value"),
+        Output("quality-subtab", "value"),
+        Input("quality-checks", "cellClicked"),
+        prevent_initial_call=True,
+    )
+    def select_quality_check(event):
+        if not event or not event.get("rowId"):
+            return no_update, no_update
+        return event["rowId"], "raw"
+
+    @app.callback(
+        Output("quality-evidence", "rowData"),
+        Output("quality-evidence", "columnDefs"),
+        Output("quality-evidence-note", "children"),
+        Output("quality-page", "data"),
+        Output("quality-page-label", "children"),
+        Output("quality-prev", "disabled"),
+        Output("quality-next", "disabled"),
+        Output("quality-sort", "data"),
+        Input("quality-evidence", "columnState"),
+        Input("quality-evidence", "filterModel"),
+        Input("quality-check-choice", "value"),
+        Input("quality-year", "data"),
+        Input("quality-sv", "data"),
+        Input("data-version-store", "data"),
+        Input("quality-prev", "n_clicks"),
+        Input("quality-next", "n_clicks"),
+        State("quality-page", "data"),
+        State("quality-sort", "data"),
+        State("active-tab-store", "data"),
+    )
+    def quality_evidence(column_state, filter_model, check_id, year, sv, _version, _prev, _next, page, previous_sort, tab):
+        if tab != "tab-quality":
+            return (no_update,) * 8
+        sort_model = [
+            {"colId": c["colId"], "sort": c["sort"]}
+            for c in sorted(column_state or [], key=lambda c: c.get("sortIndex") or 0)
+            if c.get("sort") in ("asc", "desc")
+        ]
+        if "quality-evidence.columnState" in ctx.triggered_prop_ids and "quality-evidence.filterModel" not in ctx.triggered_prop_ids and sort_model == (previous_sort or []):
+            return (no_update,) * 8
+        try:
+            report = load_quality_report(year, sv)
+            check = next((c for c in report.checks if c["id"] == check_id), None)
+            if check is None:
+                return [], [], "Bitte Prüfung auswählen.", 0, "", True, True, sort_model
+            requested = 0
+            if ctx.triggered_id == "quality-prev":
+                requested = max(0, (page or 0) - 1)
+            elif ctx.triggered_id == "quality-next":
+                requested = (page or 0) + 1
+            records, count, page = report.records(check_id, requested, sort_model=sort_model, filter_model=filter_model)
+            from pack.config import RAW_BESTAND_COLUMNS
+            columns = [{
+                "headerName": c, "field": c, "minWidth": 190, "cellDataType": False,
+                "headerClass": "pivot-highlighted-header",
+                **({"cellStyle": {"backgroundColor": "#fff4ce"}} if c in check["columns"] else {}),
+            } for c in RAW_BESTAND_COLUMNS]
+            pages = max(1, (count + 99) // 100)
+            return (
+                records, columns if ctx.triggered_id == "quality-check-choice" or not column_state else no_update,
+                f"{check['Prüfung']} · {count} Datensätze. {check['Auswirkung']} "
+                "Gelb markierte Felder gehören zur ausgewählten Prüfung. "
+                "Vergleichen Sie bei widersprüchlichen Angaben die Datenstände desselben Falls.",
+                page, f"Seite {page + 1} / {pages}", page == 0, page + 1 >= pages, sort_model,
+            )
+        except Exception:
+            logging.exception("Data quality evidence failed")
+            return [], [], "Die Datensätze konnten nicht geladen werden.", 0, "", True, True, no_update
 
     @app.callback(
         Output("active-tab-store", "data"),
@@ -91,6 +206,8 @@ def register_callbacks(app):
             return render_monitoring_tab(get_refresh_state_fn=get_refresh_state), None
         if tab == "tab-anchor-forecast":
             return render_forecast_tab(), None
+        if tab == "tab-quality":
+            return render_quality_tab(), None
         return html.Div(style=PAGE_STYLE), None
 
     @app.callback(
@@ -99,6 +216,8 @@ def register_callbacks(app):
         Input("active-tab-store", "data"),
     )
     def update_section_title(tab):
+        if tab == "tab-quality":
+            return "Datenqualität und Auswirkungen auf die Prognose", "app-section-title app-section-title--monitoring"
         if tab == "tab-monitoring":
             return (
                 "Potential und Ertrag",
@@ -314,9 +433,18 @@ def register_callbacks(app):
                 week_id, context["year"], context["sachverhalt"],
                 selected["cases"], selected["days"],
             )
-            # JSON transport preserves source values, with dates serialized as ISO strings.
+            # Format date columns for the grid without changing the DuckDB records.
             import json
             raw_rows = json.loads(raw.to_json(orient="records", date_format="iso"))
+            for record in raw_rows:
+                for column in ("/BIC/YBWRAVON", "/BIC/YBWRELAD", "/BIC/YBWRABIS", "/BIC/YBWRIPL"):
+                    value = record.get(column)
+                    if value is None:
+                        continue
+                    text = str(value)
+                    compact = text[:10].replace("-", "")
+                    if len(compact) == 8 and compact.isdigit():
+                        record[column] = f"{compact[6:8]}.{compact[4:6]}.{compact[:4]}"
             message = (
                 f"Woche ab {selected['week']} · {len(raw_rows)} Fälle · "
                 f"{selected['days']:,.0f} Lückentage. "
