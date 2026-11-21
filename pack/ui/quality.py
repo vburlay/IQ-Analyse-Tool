@@ -181,6 +181,33 @@ def overview_content(report):
                style={"color": "#607286", "fontSize": "13px", "margin": "14px 0 22px"}),
         *([dcc.Graph(figure=fig, config={"displaylogo": False}),
            dcc.Graph(figure=timeline, config={"displaylogo": False})] if active else []),
+        html.H3("Zeitliche Abdeckung je Sachverhalt",
+                style={"fontSize": "19px", "margin": "24px 0 10px", "fontWeight": "600"}),
+        html.P(
+            "Pausen beziehen sich auf erstes Ladedatum zwischen erster und letzter Beobachtung. "
+            "IPL-Rückstand vergleicht Datenstände innerhalb der Auslieferung. "
+            "Beide Hinweise benötigen fachliche Klärung; sie beweisen keine fehlenden Datensätze.",
+            style={"fontSize": "13px", "color": "#607286"}),
+        dag.AgGrid(
+            id="quality-coverage", rowData=report.coverage,
+            columnDefs=[{"headerName": c, "field": c, "minWidth": width,
+                         "headerClass": "pivot-highlighted-header"}
+                        for c, width in [
+                            ("Sachverhalt", 140), ("Erste Ladung", 150), ("Letzte erste Ladung", 180),
+                            ("Letzter IPL", 150), ("IPL-Rückstand (Tage)", 180),
+                            ("Wochen ohne Einträge", 190), ("Längste Pause (Wochen)", 200),
+                            ("Zeiträume ohne Einträge", 400),
+                        ]],
+            defaultColDef={"sortable": True, "filter": True, "resizable": True},
+            dashGridOptions={"pagination": True, "paginationPageSize": 10},
+            className="ag-theme-alpine", style={"height": "360px"},
+        ),
+        html.Div([
+            html.Strong("Vollständigkeitsabgleich mit SAP HANA: nicht geprüft."),
+            html.Div("Für eine Bestätigung werden Kontrollanzahl und Kontrollsumme aus HANA "
+                     "zum selben Abfragezeitpunkt und mit denselben Filtern benötigt."),
+        ], style={"marginTop": "18px", "padding": "14px 18px", "backgroundColor": "#f0f5fa",
+                  "borderRadius": "8px", "fontSize": "13px"}),
         html.Details([
             html.Summary("Wie sind die Ergebnisse einzuordnen?", style={"cursor": "pointer", "fontWeight": "600"}),
             html.P("Eine Datensatz oder ein Fall kann mehrere Prüfungen betreffen. "

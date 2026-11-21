@@ -8,6 +8,27 @@ from pack.ui.quality import overview_content
 
 
 class QualityTests(unittest.TestCase):
+    def test_history_gaps_and_group_freshness(self):
+        rows = [
+            self.row(**{"/BIC/YBWRELAD": "2025-01-06", "/BIC/YBWRIPL": "20250106"}),
+            self.row(**{"/BIC/YBWRELAD": "2025-01-27", "/BIC/YBWRIPL": "20250127"}),
+            self.row(**{"/BIC/YBWRSV": "004", "/BIC/YBWRIPL": "20250303"}),
+        ]
+        report = build_quality_report(pd.DataFrame(rows))
+        group = next(item for item in report.coverage if item["Sachverhalt"] == "01a")
+        self.assertEqual(group["Wochen ohne Einträge"], 2)
+        self.assertEqual(group["Längste Pause (Wochen)"], 2)
+        self.assertEqual(group["IPL-Rückstand (Tage)"], 35)
+        self.assertIn("13.01.2025–26.01.2025", group["Zeiträume ohne Einträge"])
+        self.assertEqual(report.records("history_gaps")[1], 2)
+        self.assertEqual(report.records("stale_groups")[1], 2)
+
+    def test_hana_completeness_never_claims_success_without_controls(self):
+        report = build_quality_report(pd.DataFrame([self.row()]))
+        check = next(c for c in report.checks if c["id"] == "hana_reconciliation")
+        self.assertEqual(check["Status"], "Nicht geprüft")
+        self.assertEqual(report.records("hana_reconciliation")[1], 0)
+
     def test_evidence_filters_whole_selection_and_display_dates(self):
         rows = [self.row(**{"/B99/S_BWPKKD": f"case-{i}"}) for i in range(137)]
         report = build_quality_report(pd.DataFrame(rows))

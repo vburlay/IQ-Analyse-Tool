@@ -1,6 +1,6 @@
 """Read-only data-quality checks with source-row evidence."""
-from dataclasses import dataclass
-from datetime import date
+from dataclasses import dataclass, field
+from datetime import date, timedelta
 from functools import lru_cache
 from pathlib import Path
 
@@ -66,6 +66,7 @@ class QualityReport:
     checks: list
     masks: dict
     affected: pd.Series
+    coverage: list = field(default_factory=list)
 
     def records(self, check_id, page=0, size=100, sort_model=None, filter_model=None):
         mask = self.masks.get(check_id, self.affected)
@@ -210,8 +211,67 @@ def build_quality_report(source, year="all", sachverhalt="all"):
     add("sv_ui", "Sachverhalt außerhalb der Prognoseauswahl", "Information",
         ~source["/BIC/YBWRSV"].astype("string").isin(["000", "004", "005", "01a", "01b", "01c", "04a", "04b", "04c"]),
         "Über 'all' enthalten, aber im aktuellen Prognosefilter nicht einzeln auswählbar.", ["/BIC/YBWRSV"])
+    add("sv_missing", "Fehlender Sachverhalt", "Fehler",
+        source["/BIC/YBWRSV"].astype("string").fillna("").str.strip().eq(""),
+        "Datensätze können keiner Sachverhaltsgruppe zugeordnet werden.", ["/BIC/YBWRSV"])
+
+    gap_mask = pd.Series(False, index=source.index)
+    stale_mask = pd.Series(False, index=source.index)
+    coverage = []
+    usable = source.loc[selected].copy()
+    latest_ipl = max(dates[DATES[3]].loc[selected].dropna(), default=None)
+    for sv, group in usable.groupby("/BIC/YBWRSV", dropna=False):
+        load_dates = dates[DATES[2]].loc[group.index].dropna()
+        ipls = dates[DATES[3]].loc[group.index].dropna()
+        last_ipl = max(ipls, default=None)
+        lag = (latest_ipl - last_ipl).days if latest_ipl and last_ipl else None
+        # Coverage describes first-load observations; it does not certify extraction completeness.
+        weeks = sorted({value - timedelta(days=value.weekday()) for value in load_dates})
+        missing, max_gap, intervals = 0, 0, []
+        boundaries = set()
+        for before, after in zip(weeks, weeks[1:]):
+            gap = (after - before).days // 7 - 1
+            if gap > 0:
+                missing += gap
+                max_gap = max(max_gap, gap)
+                boundaries.update((before, after))
+                intervals.append(
+                    f"{(before + timedelta(days=7)):%d.%m.%Y}–{(after - timedelta(days=1)):%d.%m.%Y}"
+                )
+        if boundaries:
+            gap_mask.loc[group.index] = dates[DATES[2]].loc[group.index].map(
+                lambda value: value is not None and pd.notna(value)
+                and value - timedelta(days=value.weekday()) in boundaries
+            )
+        if lag is not None and lag >= 28:
+            stale_mask.loc[group.index] = True
+        coverage.append({
+            "Sachverhalt": str(sv) if pd.notna(sv) else "(leer)",
+            "Erste Ladung": min(load_dates).strftime("%d.%m.%Y") if len(load_dates) else "—",
+            "Letzte erste Ladung": max(load_dates).strftime("%d.%m.%Y") if len(load_dates) else "—",
+            "Letzter IPL": last_ipl.strftime("%d.%m.%Y") if last_ipl else "—",
+            "IPL-Rückstand (Tage)": lag,
+            "Wochen ohne Einträge": missing,
+            "Längste Pause (Wochen)": max_gap,
+            "Zeiträume ohne Einträge": "; ".join(intervals) or "—",
+        })
+    add("history_gaps", "Wochen ohne Einträge innerhalb der Historie", "Prüfen", gap_mask,
+        "Pausen zwischen erster und letzter Ladung je Sachverhalt prüfen. "
+        "Rohdaten zeigen die Randwochen vor und nach den Pausen. "
+        "Anzahl und Zeiträume stehen im Überblick; fehlende Einträge beweisen keine Datenlücke.",
+        ["/BIC/YBWRSV", DATES[2]])
+    add("stale_groups", "Sachverhalte mit älterem IPL-Datenstand", "Prüfen", stale_mask,
+        "Letzter IPL liegt mindestens 28 Tage hinter dem neuesten IPL der Auswahl. "
+        "Das ist ein Prüfwert: eingestellte Sachverhalte können fachlich korrekt sein.",
+        ["/BIC/YBWRSV", DATES[3]])
+    add("hana_reconciliation", "Vollständigkeitsabgleich mit SAP HANA", "Information",
+        pd.Series(False, index=source.index),
+        "Nicht geprüft: Kontrollanzahl und Kontrollsumme aus SAP HANA für denselben "
+        "Abfragezeitpunkt und dieselben Filter liegen nicht vor. "
+        "Die Anzahl vorhandener Datensätze allein bestätigt keine vollständige Auslieferung.", [])
+    checks[-1]["Status"] = "Nicht geprüft"
     return QualityReport(source.loc[selected], {k: v.loc[selected] for k, v in dates.items()},
-                         checks, {k: v.loc[selected] for k, v in masks.items()}, affected.loc[selected])
+                         checks, {k: v.loc[selected] for k, v in masks.items()}, affected.loc[selected], coverage)
 
 
 @lru_cache(maxsize=2)
