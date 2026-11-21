@@ -490,3 +490,14 @@
         flex: 1 1 100%;
     }
 }
+
+#quality-checks .ag-cell-wrap-text {
+    line-height: 1.35;
+    padding-top: 7px;
+    padding-bottom: 7px;
+}
+
+#quality-checks .ag-cell-wrapper,
+#quality-checks .ag-cell-value {
+    line-height: 1.35;
+}

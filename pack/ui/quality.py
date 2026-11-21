@@ -38,7 +38,7 @@ def render_quality_tab():
                     ],
                     defaultColDef={"sortable": True, "filter": True, "resizable": True,
                                    "wrapText": True, "autoHeight": True},
-                    dashGridOptions={"pagination": True, "paginationPageSize": 20, "rowHeight": 52, "headerHeight": 48},
+                    dashGridOptions={"pagination": True, "paginationPageSize": 20, "rowHeight": 36, "headerHeight": 42},
                     getRowId="params.data.id", className="ag-theme-alpine",
                     rowClassRules={
                         "quality-error-row": "params.data && params.data.Status === 'Fehler'",
