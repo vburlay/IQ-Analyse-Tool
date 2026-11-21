@@ -37,7 +37,9 @@ def render_quality_tab():
                                              ("Fälle", 110), ("Sachverhalte", 180), ("Ankerbeginn-Jahre", 180), ("Auswirkung", 450)]
                     ],
                     defaultColDef={"sortable": True, "filter": True, "resizable": True,
-                                   "wrapText": True, "autoHeight": True},
+                                   "wrapText": True, "autoHeight": True,
+                                   "cellStyle": {"lineHeight": "20px", "paddingTop": "5px",
+                                                 "paddingBottom": "5px", "fontSize": "14px"}},
                     dashGridOptions={"pagination": True, "paginationPageSize": 20, "rowHeight": 36, "headerHeight": 42},
                     getRowId="params.data.id", className="ag-theme-alpine",
                     rowClassRules={
