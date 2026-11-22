@@ -1,11 +1,11 @@
 """Data-quality workspace and evidence tables."""
-from datetime import timedelta
+from datetime import date, timedelta
 
 import plotly.graph_objects as go
 from dash import dcc, html
 import dash_ag_grid as dag
 
-from pack.config import RAW_BESTAND_COLUMNS
+from pack.config import ANALYSIS_START_YEAR, RAW_BESTAND_COLUMNS
 from pack.ui.styles import PAGE_STYLE, CHART_CARD_STYLE, SECTION_STYLE, SUBTITLE_STYLE, BG_COLOR
 
 
@@ -22,7 +22,16 @@ def render_quality_tab():
         ], style={"fontSize": "13px", "color": "#607286", "marginBottom": "20px", "lineHeight": "1.6"}),
         dcc.Tabs(id="quality-subtab", value="overview", children=[
             dcc.Tab(label="Überblick", value="overview", children=[
-                html.Div(id="quality-overview", style={"width": "100%", "margin": "0"}),
+                dcc.Loading(
+                    html.Div(id="quality-overview", style={"width": "100%", "margin": "0"}),
+                    target_components={"quality-overview": "children"},
+                    delay_show=200,
+                    parent_style={"minHeight": "120px"},
+                    custom_spinner=html.Div([
+                        html.Span("⏳", className="quality-loading-hourglass", **{"aria-hidden": "true"}),
+                        html.Span("Datenqualität wird geprüft …"),
+                    ], className="quality-loading-status", role="status"),
+                ),
             ]),
             dcc.Tab(label="Prüfungen", value="checks", children=[
                 html.P("Wählen Sie eine Prüfung, um die betroffenen Datensätze und ihre Bedeutung zu sehen."),
@@ -130,14 +139,16 @@ def overview_content(report):
         xaxis_title="Fälle (Mehrfachzählung zwischen Prüfungen möglich)",
     )
     weeks = report.dates["/BIC/YBWRELAD"].loc[report.affected]
+    start_date = date(ANALYSIS_START_YEAR, 1, 1)
     week_counts = {}
     for value in weeks.dropna():
-        start = value - timedelta(days=value.weekday())
-        week_counts[start] = week_counts.get(start, 0) + 1
+        if value >= start_date:
+            start = max(start_date, value - timedelta(days=value.weekday()))
+            week_counts[start] = week_counts.get(start, 0) + 1
     times = sorted(week_counts)
     timeline = go.Figure(go.Bar(x=times, y=[week_counts[t] for t in times], marker_color="#0b6fb3"))
     timeline.update_layout(
-        title="Zeilen mit Fehlern oder Prüfhinweisen nach erstem Ladedatum",
+        title=f"Zeilen mit Fehlern oder Prüfhinweisen nach erstem Ladedatum ab {ANALYSIS_START_YEAR}",
         height=320, paper_bgcolor=BG_COLOR, plot_bgcolor=BG_COLOR,
         xaxis_title="Woche", yaxis_title="Datensätze",
     )
@@ -148,6 +159,8 @@ def overview_content(report):
         )
         chart.update_xaxes(gridcolor="#e1e8ef", zeroline=False)
         chart.update_yaxes(gridcolor="#e1e8ef", zeroline=False)
+    if times:
+        timeline.update_xaxes(range=[start_date, times[-1] + timedelta(days=7)])
     def metric(label, value, detail, color):
         return html.Div([
             html.Div(label, style={"fontSize": "13px", "fontWeight": "600", "color": "#607286"}),
@@ -188,8 +201,8 @@ def overview_content(report):
         *findings,
         html.P("Unter Prüfungen sehen Sie alle Ergebnisse. Eine Prüfung öffnet die zugehörigen Rohdaten.",
                style={"color": "#607286", "fontSize": "13px", "margin": "14px 0 22px"}),
-        *([dcc.Graph(figure=fig, config={"displaylogo": False}),
-           dcc.Graph(figure=timeline, config={"displaylogo": False})] if active else []),
+        *([dcc.Graph(figure=fig, config={"displaylogo": False})] if active else []),
+        *([dcc.Graph(figure=timeline, config={"displaylogo": False})] if times else []),
         html.H3("Zeitliche Abdeckung je Sachverhalt",
                 style={"fontSize": "19px", "margin": "24px 0 10px", "fontWeight": "600"}),
         html.P(

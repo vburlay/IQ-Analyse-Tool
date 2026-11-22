@@ -331,6 +331,30 @@
     line-height: 1.6;
 }
 
+.quality-loading-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #304b5b;
+    font-weight: 600;
+}
+
+.quality-loading-hourglass {
+    display: inline-block;
+    font-size: 24px;
+    animation: quality-hourglass-flip 2s steps(2, end) infinite;
+}
+
+@keyframes quality-hourglass-flip {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .quality-loading-hourglass {
+        animation: none;
+    }
+}
+
 .quality-filters,
 .quality-tabs,
 .quality-note,
