@@ -1,6 +1,7 @@
 import unittest
 from datetime import date
 
+from pack.config import ANALYSIS_START_YEAR
 from pack.forecast_runs import ForecastRun
 
 import pandas as pd
@@ -111,13 +112,14 @@ class AnchorForecastTests(unittest.TestCase):
     def test_all_counts_each_case_once(self):
         actual = load_anchor_cohort_weekly_data("all", "all")
         expected = duck_query_df(
-            '''
+            f'''
             SELECT COUNT(*) AS cases
             FROM (
                 SELECT DISTINCT
                     "/B99/S_BWPKKD",
                     CAST("/BIC/YBWRAVON" AS DATE) AS ankerbeginn
                 FROM raw_bestand
+                WHERE CAST("/BIC/YBWRABIS" AS DATE) >= DATE '{ANALYSIS_START_YEAR}-01-01'
             )
             '''
         ).iloc[0]["cases"]

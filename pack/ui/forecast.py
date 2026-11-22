@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 from dash import html, dcc
 
 from pack.forecast_runs import ALL_ANCHOR_YEARS, load_forecast_runs
+from pack.config import ANALYSIS_START_YEAR
 from pack.ui.styles import *
 from pack.ui.components import (
     section_title,
@@ -396,9 +397,9 @@ def render_forecast_tab():
                                 options=[
                                     *[
                                         {"label": str(year), "value": year}
-                                        for year in range(default_year, default_year - 3, -1)
+                                        for year in range(default_year, ANALYSIS_START_YEAR - 1, -1)
                                     ],
-                                    {"label": "all", "value": "all"},
+                                    {"label": f"Alle ab {ANALYSIS_START_YEAR}", "value": "all"},
                                 ],
                                 value=default_year,
                                 clearable=False,

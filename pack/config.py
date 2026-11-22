@@ -19,6 +19,9 @@ DB_PATH = str(BASE_DIR / "data" / "iq_analyse.db")
 
 TABLE_RAW = "raw_bestand"
 
+# Earliest reporting year; source history remains available for cohort calculations.
+ANALYSIS_START_YEAR = 2024
+
 # SAP HANA connection settings. Credentials are entered in the application
 # and are never stored in this file.
 hana_config = ConfigParser(interpolation=None)

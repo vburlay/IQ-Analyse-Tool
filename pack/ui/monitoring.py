@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from dash import html, dcc
 
+from pack.config import ANALYSIS_START_YEAR
 from pack.ui.styles import *
 from pack.ui.components import (
     kpi_card,
@@ -201,7 +202,7 @@ def render_monitoring_tab(get_refresh_state_fn):
                                 className="monitoring-year-dropdown",
                                 options=[
                                     {"label": str(year), "value": year}
-                                    for year in range(date.today().year, date.today().year - 3, -1)
+                                    for year in range(date.today().year, ANALYSIS_START_YEAR - 1, -1)
                                 ],
                                 value=date.today().year,
                                 placeholder="Ankerjahr",

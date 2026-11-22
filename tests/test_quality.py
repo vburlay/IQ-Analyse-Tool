@@ -23,6 +23,36 @@ class QualityTests(unittest.TestCase):
         self.assertEqual(report.records("history_gaps")[1], 2)
         self.assertEqual(report.records("stale_groups")[1], 2)
 
+    def test_reporting_scope_keeps_required_history_and_malformed_dates(self):
+        old = self.row(**{
+            "/B99/S_BWPKKD": "old-only", "/BIC/YBWRAVON": "2020-01-01",
+            "/BIC/YBWRABIS": "2021-12-31", "/BIC/YBWRELAD": "2020-06-01",
+            "/BIC/YBWRIPL": "20210601",
+        })
+        history = {**old, "/B99/S_BWPKKD": "active"}
+        active = {**history, "/BIC/YBWRABIS": "9999-12-31",
+                  "/BIC/YBWRELAD": "2025-06-01", "/BIC/YBWRIPL": "20250602"}
+        recent_ipl = {**old, "/B99/S_BWPKKD": "recent-ipl", "/BIC/YBWRIPL": "20240101"}
+        recent_load = {**old, "/B99/S_BWPKKD": "recent-load", "/BIC/YBWRELAD": "2024-01-01"}
+        malformed = {**old, "/B99/S_BWPKKD": "invalid", "/BIC/YBWRABIS": "wrong"}
+        report = build_quality_report(pd.DataFrame([old, history, active, recent_ipl, recent_load, malformed]))
+        self.assertEqual(len(report.source), 5)
+        self.assertNotIn("old-only", report.source["/B99/S_BWPKKD"].tolist())
+        self.assertEqual(report.records("load_conflict")[1], 2)
+        self.assertEqual(report.records("date_/BIC/YBWRABIS")[1], 1)
+
+    def test_regular_pauses_and_old_ipl_are_information_only(self):
+        rows = [
+            self.row(**{"/B99/S_BWPKKD": "a", "/BIC/YBWRELAD": "2025-01-06", "/BIC/YBWRIPL": "20250106"}),
+            self.row(**{"/B99/S_BWPKKD": "b", "/BIC/YBWRELAD": "2025-01-27", "/BIC/YBWRIPL": "20250127"}),
+            self.row(**{"/B99/S_BWPKKD": "c", "/BIC/YBWRSV": "004", "/BIC/YBWRELAD": "2025-03-03", "/BIC/YBWRIPL": "20250303"}),
+        ]
+        report = build_quality_report(pd.DataFrame(rows))
+        statuses = {c["id"]: c["Status"] for c in report.checks}
+        self.assertEqual(statuses["history_gaps"], "Information")
+        self.assertEqual(statuses["stale_groups"], "Information")
+        self.assertFalse(report.affected.any())
+
     def test_hana_completeness_never_claims_success_without_controls(self):
         report = build_quality_report(pd.DataFrame([self.row()]))
         check = next(c for c in report.checks if c["id"] == "hana_reconciliation")

@@ -9,6 +9,7 @@ import duckdb
 import pandas as pd
 
 from pack.config import (
+    ANALYSIS_START_YEAR,
     DB_PATH,
     DB_RETRIES,
     DB_RETRY_DELAY,
@@ -92,7 +93,7 @@ def load_anchor_cohort_weekly_data(
           AND CAST("/BIC/YBWRABIS" AS DATE) >= DATE '{selected_year}-01-01'
         '''
     else:
-        anchor_filter = ""
+        anchor_filter = f"""AND CAST("/BIC/YBWRABIS" AS DATE) >= DATE '{ANALYSIS_START_YEAR}-01-01'"""
 
     sql = f'''
     WITH selected AS (
@@ -151,7 +152,7 @@ def load_anchor_cohort_case_data(
         sachverhalt_filter = 'AND CAST("/BIC/YBWRSV" AS VARCHAR) = ?'
         params.append(selected_sachverhalt)
 
-    anchor_filter = ""
+    anchor_filter = f"""AND CAST("/BIC/YBWRABIS" AS DATE) >= DATE '{ANALYSIS_START_YEAR}-01-01'"""
     if anchor_year not in (None, "all"):
         selected_year = int(anchor_year)
         anchor_filter = f'''
@@ -286,6 +287,9 @@ def load_anomaly_raw_records(week, anchor_year, sachverhalt, expected_cases, exp
             'CAST("/BIC/YBWRABIS" AS DATE) >= CAST(? AS DATE)',
         ])
         params.extend([f"{year}-12-31", f"{year}-01-01"])
+    else:
+        filters.append('CAST("/BIC/YBWRABIS" AS DATE) >= CAST(? AS DATE)')
+        params.append(f"{ANALYSIS_START_YEAR}-01-01")
     columns = ", ".join(f'"{column}"' for column in RAW_BESTAND_COLUMNS)
     where = " AND ".join(filters) or "TRUE"
     source = duck_query_df(f'SELECT {columns} FROM {TABLE_RAW} WHERE {where}', params)

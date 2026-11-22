@@ -9,6 +9,9 @@ from pack.config import RAW_BESTAND_COLUMNS
 from pack.ui.styles import PAGE_STYLE, CHART_CARD_STYLE, SECTION_STYLE, SUBTITLE_STYLE, BG_COLOR
 
 
+QUALITY_GRID_HEIGHT = "clamp(680px, 72vh, 1100px)"
+
+
 def render_quality_tab():
     layout = html.Div([
         dcc.Store(id="quality-year", data="all"),
@@ -25,7 +28,7 @@ def render_quality_tab():
                 html.P("Wählen Sie eine Prüfung, um die betroffenen Datensätze und ihre Bedeutung zu sehen."),
                 dag.AgGrid(
                     id="quality-checks", rowData=[], columnDefs=[
-                        {"headerName": field, "field": field, "minWidth": width,
+                        {"headerName": field, "field": field, "minWidth": width, "flex": flex,
                          "headerClass": "pivot-index-header" if field == "Prüfung" else "pivot-highlighted-header",
                          **({"cellClassRules": {
                              "quality-status-error": "params.value === 'Fehler'",
@@ -33,20 +36,23 @@ def render_quality_tab():
                              "quality-status-info": "params.value === 'Information'",
                              "quality-status-ok": "params.value === 'OK'",
                          }} if field == "Status" else {})}
-                        for field, width in [("Prüfung", 300), ("Status", 130), ("Zeilen", 110),
-                                             ("Fälle", 110), ("Sachverhalte", 180), ("Ankerbeginn-Jahre", 180), ("Auswirkung", 450)]
+                        for field, width, flex in [
+                            ("Prüfung", 240, 3), ("Status", 115, 1), ("Zeilen", 85, 1),
+                            ("Fälle", 85, 1), ("Sachverhalte", 145, 1.5),
+                            ("Ankerbeginn-Jahre", 175, 1.5), ("Auswirkung", 300, 5),
+                        ]
                     ],
                     defaultColDef={"sortable": True, "filter": True, "resizable": True,
-                                   "wrapText": True, "autoHeight": True,
-                                   "cellStyle": {"lineHeight": "20px", "paddingTop": "5px",
-                                                 "paddingBottom": "5px", "fontSize": "14px"}},
-                    dashGridOptions={"pagination": True, "paginationPageSize": 20, "rowHeight": 36, "headerHeight": 42},
+                                   "wrapText": True, "autoHeight": True},
+                    dashGridOptions={"pagination": True, "paginationPageSize": 50,
+                                     "paginationPageSizeSelector": [20, 50, 100],
+                                     "rowHeight": 30, "headerHeight": 42},
                     getRowId="params.data.id", className="ag-theme-alpine",
                     rowClassRules={
                         "quality-error-row": "params.data && params.data.Status === 'Fehler'",
                         "quality-warning-row": "params.data && params.data.Status === 'Prüfen'",
                     },
-                    style={"height": "650px"},
+                    style={"height": QUALITY_GRID_HEIGHT},
                 ),
             ]),
             dcc.Tab(label="Rohdaten", value="raw", children=[
@@ -60,10 +66,11 @@ def render_quality_tab():
                                  "cellDataType": False, "headerClass": "pivot-highlighted-header"}
                                 for c in RAW_BESTAND_COLUMNS],
                     defaultColDef={"resizable": True, "sortable": True, "wrapText": True, "autoHeight": True,
+                                   "flex": 1,
                                    "comparator": {"function": "0"},
                                    "filter": "agTextColumnFilter", "floatingFilter": True,
                                    "filterParams": {"debounceMs": 350}},
-                    className="ag-theme-alpine", style={"height": "520px"},
+                    className="ag-theme-alpine", style={"height": QUALITY_GRID_HEIGHT},
                 ),
                 html.Div([
                     html.Button("Zurück", id="quality-prev", disabled=True, className="quality-page-button"),
@@ -188,11 +195,13 @@ def overview_content(report):
         html.P(
             "Pausen beziehen sich auf erstes Ladedatum zwischen erster und letzter Beobachtung. "
             "IPL-Rückstand vergleicht Datenstände innerhalb der Auslieferung. "
-            "Beide Hinweise benötigen fachliche Klärung; sie beweisen keine fehlenden Datensätze.",
+            "Pausen sind reguläre Wochen ohne neue Fälle. Ein älterer IPL allein ist kein Datenfehler. "
+            "Beide Angaben sind rein informativ und erhöhen den Anteil betroffener Fälle nicht.",
             style={"fontSize": "13px", "color": "#607286"}),
         dag.AgGrid(
             id="quality-coverage", rowData=report.coverage,
             columnDefs=[{"headerName": c, "field": c, "minWidth": width,
+                         "flex": 3 if c == "Zeiträume ohne Einträge" else 1,
                          "headerClass": "pivot-highlighted-header"}
                         for c, width in [
                             ("Sachverhalt", 140), ("Erste Ladung", 150), ("Letzte erste Ladung", 180),
@@ -201,8 +210,9 @@ def overview_content(report):
                             ("Zeiträume ohne Einträge", 400),
                         ]],
             defaultColDef={"sortable": True, "filter": True, "resizable": True},
-            dashGridOptions={"pagination": True, "paginationPageSize": 10},
-            className="ag-theme-alpine", style={"height": "360px"},
+            dashGridOptions={"pagination": True, "paginationPageSize": 20,
+                             "paginationPageSizeSelector": [10, 20, 50], "rowHeight": 32},
+            className="ag-theme-alpine", style={"height": "clamp(420px, 55vh, 740px)"},
         ),
         html.Div([
             html.Strong("Vollständigkeitsabgleich mit SAP HANA: nicht geprüft."),

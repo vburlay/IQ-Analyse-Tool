@@ -72,7 +72,8 @@ def register_callbacks(app):
             return (
                 overview_content(report), report.checks,
                 [{"label": f"{c['Prüfung']} ({c['Zeilen']} Zeilen)", "value": c["id"]} for c in report.checks],
-                "Geprüft werden alle bereitgestellten IQ-Daten. "
+                "Geprüft werden die für Analyse und Prognose ab 2024 relevanten IQ-Daten "
+                "einschließlich benötigter Historie. Nicht lesbare Datumsangaben bleiben zur Prüfung enthalten. "
                 "Sachverhalte und Ankerbeginn-Jahre zeigen, wo die Hinweise auftreten. "
                 "Ein Fall kann mehrere Ankerjahre betreffen. Die angezeigten Jahre bezeichnen "
                 "den Beginn seines Ankerzeitraums. Die genauen Datumsangaben stehen unter Rohdaten.",

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from pack.config import DB_PATH, RAW_BESTAND_COLUMNS
+from pack.config import ANALYSIS_START_YEAR, DB_PATH, RAW_BESTAND_COLUMNS
 from pack.data_access import database_connection
 
 KEY = ["/B99/S_BWPKKD", "/BIC/YBWRAVON"]
@@ -133,6 +133,17 @@ def build_quality_report(source, year="all", sachverhalt="all"):
     })
     valid_key = key_frame["id"].fillna("").str.strip().ne("") & key_frame["anchor"].notna()
     groups = [key_frame["id"], key_frame["anchor"]]
+    cutoff = date(ANALYSIS_START_YEAR, 1, 1)
+    # A row is relevant to either reporting date basis or a supported anchor year.
+    # Unreadable dates remain in scope so malformed source values are not hidden.
+    relevant = pd.Series([
+        any(value is None or pd.isna(value) for value in (begin, end, load, ipl))
+        or end >= cutoff or load >= cutoff or ipl >= cutoff
+        for begin, end, load, ipl in zip(*(dates[column] for column in DATES))
+    ], index=source.index, dtype=bool)
+    # Keep every snapshot of a relevant case, including history before the cutoff.
+    history = relevant.groupby(groups, dropna=False).transform("max")
+    selected &= relevant | (valid_key & history)
     checks, masks = [], {}
     affected = pd.Series(False, index=source.index)
 
@@ -255,14 +266,14 @@ def build_quality_report(source, year="all", sachverhalt="all"):
             "Längste Pause (Wochen)": max_gap,
             "Zeiträume ohne Einträge": "; ".join(intervals) or "—",
         })
-    add("history_gaps", "Wochen ohne Einträge innerhalb der Historie", "Prüfen", gap_mask,
-        "Pausen zwischen erster und letzter Ladung je Sachverhalt prüfen. "
+    add("history_gaps", "Wochen ohne neue Fälle", "Information", gap_mask,
+        "Wochen ohne neue Fälle sind normale Betriebspausen und kein Datenfehler. "
         "Rohdaten zeigen die Randwochen vor und nach den Pausen. "
         "Anzahl und Zeiträume stehen im Überblick; fehlende Einträge beweisen keine Datenlücke.",
         ["/BIC/YBWRSV", DATES[2]])
-    add("stale_groups", "Sachverhalte mit älterem IPL-Datenstand", "Prüfen", stale_mask,
+    add("stale_groups", "Sachverhalte mit älterem IPL-Datenstand", "Information", stale_mask,
         "Letzter IPL liegt mindestens 28 Tage hinter dem neuesten IPL der Auswahl. "
-        "Das ist ein Prüfwert: eingestellte Sachverhalte können fachlich korrekt sein.",
+        "Ein älterer IPL allein ist kein Datenfehler; Sachverhalte können regulär beendet sein.",
         ["/BIC/YBWRSV", DATES[3]])
     add("hana_reconciliation", "Vollständigkeitsabgleich mit SAP HANA", "Information",
         pd.Series(False, index=source.index),

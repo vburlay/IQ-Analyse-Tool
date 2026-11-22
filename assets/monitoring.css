@@ -491,24 +491,12 @@
     }
 }
 
-#quality-checks .ag-cell-wrap-text {
-    line-height: 1.35;
-    padding-top: 7px;
-    padding-bottom: 7px;
-}
-
-#quality-checks .ag-cell-wrapper,
-#quality-checks .ag-cell-value {
-    line-height: 1.35;
-}
-
 #quality-checks .ag-cell,
 #quality-checks .ag-cell-wrapper,
 #quality-checks .ag-cell-value {
-    line-height: 20px !important;
+    line-height: 20px;
 }
 
 #quality-checks .ag-cell-wrap-text {
-    padding-top: 5px !important;
-    padding-bottom: 5px !important;
+    padding-block: 3px;
 }
