@@ -39,6 +39,9 @@ def render_quality_tab():
                     id="quality-checks", rowData=[], columnDefs=[
                         {"headerName": field, "field": field, "minWidth": width, "flex": flex,
                          "headerClass": "pivot-index-header" if field == "Prüfung" else "pivot-highlighted-header",
+                         **({"valueFormatter": {"function": (
+                             "params.data && params.data.id === 'hana_reconciliation' ? '—' : params.value"
+                         )}} if field in ("Zeilen", "Fälle") else {}),
                          **({"cellClassRules": {
                              "quality-status-error": "params.value === 'Fehler'",
                              "quality-status-warning": "params.value === 'Prüfen'",

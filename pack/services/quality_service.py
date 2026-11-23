@@ -183,17 +183,10 @@ def build_quality_report(source, year="all", sachverhalt="all", hana_controls=No
     })
     valid_key = key_frame["id"].fillna("").str.strip().ne("") & key_frame["anchor"].notna()
     groups = [key_frame["id"], key_frame["anchor"]]
-    cutoff = date(ANALYSIS_START_YEAR, 1, 1)
-    # A row is relevant to either reporting date basis or a supported anchor year.
-    # Unreadable dates remain in scope so malformed source values are not hidden.
-    relevant = pd.Series([
-        any(value is None or pd.isna(value) for value in (begin, end, load, ipl))
-        or end >= cutoff or load >= cutoff or ipl >= cutoff
-        for begin, end, load, ipl in zip(*(dates[column] for column in DATES))
-    ], index=source.index, dtype=bool)
-    # Keep every snapshot of a relevant case, including history before the cutoff.
-    history = relevant.groupby(groups, dropna=False).transform("max")
-    selected &= relevant | (valid_key & history)
+    load_dates = dates[DATES[2]]
+    selected &= load_dates.isna() | load_dates.between(
+        date(ANALYSIS_START_YEAR, 1, 1), date(date.today().year, 12, 31)
+    )
     checks, masks = [], {}
     affected = pd.Series(False, index=source.index)
 
@@ -248,14 +241,18 @@ def build_quality_report(source, year="all", sachverhalt="all", hana_controls=No
     add("days_fractional", "Nicht ganzzahlige Lückentage", "Prüfen", numeric.mod(1).ne(0) & numeric.notna(),
         "Tagesdefinition und Rundung prüfen.", ["/BIC/YBWRFTAGE"])
     for identifier, column, label, severity, impact in [
-        ("load_conflict", DATES[2], "Mehrere erste Ladedaten je Fall", "Prüfen", "Die Zuordnung zu einer Woche ist mehrdeutig. Betroffene Datensätze können nicht eindeutig zugeordnet werden."),
+        ("load_conflict", DATES[2], "Mehrere erste Ladedaten je Fall", "Prüfen",
+         "Die Zuordnung zu einer Woche ist mehrdeutig. Frühere Versionen werden zum Vergleich herangezogen."),
         ("end_change", DATES[1], "Geändertes Ankerende je Fall", "Information", "Kann die Kohortenzuordnung verändern; Änderung kann fachlich korrekt sein."),
         ("sv_change", "/BIC/YBWRSV", "Geänderter Sachverhalt je Fall", "Information", "Ein Fall ist in verschiedenen Datenständen unterschiedlichen Sachverhalten zugeordnet."),
         ("days_change", "/BIC/YBWRFTAGE", "Geänderte Lückentage je Fall", "Information", "Historische Rückprüfung benötigt den damals bekannten Datenstand."),
     ]:
         values = dates[column] if column in dates else source[column]
         counts = values.groupby(groups, dropna=False).transform("nunique")
-        add(identifier, label, severity, counts.gt(1) & valid_key, impact, [*KEY, column, DATES[3]])
+        mask = counts.gt(1) & valid_key
+        if identifier == "load_conflict":
+            mask &= values.notna()
+        add(identifier, label, severity, mask, impact, [*KEY, column, DATES[3]])
     add("identical", "Vollständig identische Datensätze", "Information",
         source.duplicated(keep=False), "Wiederholungen beeinflussen Summen aus Rohzeilen; Fallprognosen zählen eindeutige Schlüssel.", list(RAW_BESTAND_COLUMNS))
     distinct = source.drop_duplicates()

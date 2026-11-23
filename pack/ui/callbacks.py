@@ -8,6 +8,7 @@ from collections import OrderedDict
 from datetime import date
 
 from pack.forecast_runs import ForecastRun, save_forecast_run
+from pack.config import ANALYSIS_START_YEAR
 
 from dash import ALL, Input, Output, State, ctx, html, no_update
 
@@ -72,8 +73,9 @@ def register_callbacks(app):
             return (
                 overview_content(report), report.checks,
                 [{"label": f"{c['Prüfung']} ({c['Zeilen']} Zeilen)", "value": c["id"]} for c in report.checks],
-                "Geprüft werden die für Analyse und Prognose ab 2024 relevanten IQ-Daten "
-                "einschließlich benötigter Historie. Nicht lesbare Datumsangaben bleiben zur Prüfung enthalten. "
+                f"Die Qualitätsprüfung zeigt Zeilen mit erstem Ladedatum von {ANALYSIS_START_YEAR} "
+                "bis zum laufenden Jahr. Fehlende oder nicht lesbare erste Ladedaten bleiben zur Prüfung enthalten. "
+                "Frühere Versionen können zur Erkennung von Widersprüchen herangezogen werden. "
                 "Sachverhalte und Ankerbeginn-Jahre zeigen, wo die Hinweise auftreten. "
                 "Ein Fall kann mehrere Ankerjahre betreffen. Die angezeigten Jahre bezeichnen "
                 "den Beginn seines Ankerzeitraums. Die genauen Datumsangaben stehen unter Rohdaten.",

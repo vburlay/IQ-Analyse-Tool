@@ -35,11 +35,16 @@ class QualityTests(unittest.TestCase):
         recent_ipl = {**old, "/B99/S_BWPKKD": "recent-ipl", "/BIC/YBWRIPL": "20240101"}
         recent_load = {**old, "/B99/S_BWPKKD": "recent-load", "/BIC/YBWRELAD": "2024-01-01"}
         malformed = {**old, "/B99/S_BWPKKD": "invalid", "/BIC/YBWRABIS": "wrong"}
-        report = build_quality_report(pd.DataFrame([old, history, active, recent_ipl, recent_load, malformed]))
-        self.assertEqual(len(report.source), 5)
-        self.assertNotIn("old-only", report.source["/B99/S_BWPKKD"].tolist())
-        self.assertEqual(report.records("load_conflict")[1], 2)
+        unreadable_load = {**malformed, "/BIC/YBWRELAD": "wrong"}
+        report = build_quality_report(pd.DataFrame([
+            old, history, active, recent_ipl, recent_load, malformed, unreadable_load,
+        ]))
+        self.assertEqual(report.source["/B99/S_BWPKKD"].tolist(), ["active", "recent-load", "invalid"])
+        records, count, _ = report.records("load_conflict")
+        self.assertEqual(count, 1)
+        self.assertEqual(records[0]["/BIC/YBWRELAD"], "01.06.2025")
         self.assertEqual(report.records("date_/BIC/YBWRABIS")[1], 1)
+        self.assertEqual(report.records("date_/BIC/YBWRELAD")[1], 1)
 
     def test_regular_pauses_and_old_ipl_are_information_only(self):
         rows = [
