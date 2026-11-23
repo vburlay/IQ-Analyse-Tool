@@ -11,6 +11,7 @@ from pack.data_access import database_connection
 
 KEY = ["/B99/S_BWPKKD", "/BIC/YBWRAVON"]
 DATES = ["/BIC/YBWRAVON", "/BIC/YBWRABIS", "/BIC/YBWRELAD", "/BIC/YBWRIPL"]
+HANA_CONTROL_TABLE = "hana_import_controls"
 
 
 def parse_source_date(value):
@@ -68,6 +69,55 @@ class QualityReport:
     affected: pd.Series
     coverage: list = field(default_factory=list)
 
+    def forecast_readiness(self, backtest_results=None):
+        """Score a screening checklist for a 13-week cumulative forecast."""
+        common_checks = ["key", "reverse", "early_load", "early_ipl", "load_conflict",
+                         "ipl_conflict", "sv_missing", *("date_" + column for column in DATES)]
+        common = self.source.index.isin([])
+        for check in common_checks:
+            common = common | self.masks[check].loc[self.source.index].to_numpy()
+
+        day_issues = common.copy()
+        for check in ("days_invalid", "days_negative", "days_fractional"):
+            day_issues |= self.masks[check].loc[self.source.index].to_numpy()
+        day_values = pd.to_numeric(self.source["/BIC/YBWRFTAGE"], errors="coerce")
+        day_weights = day_values.abs().replace([float("inf"), float("-inf")], 0).fillna(0)
+        total_weight = day_weights.sum()
+        day_share = day_weights.loc[day_issues].sum() / total_weight if total_weight else 0
+
+        ipls = self.dates[DATES[3]].dropna()
+        weeks = {value - timedelta(days=value.weekday()) for value in ipls
+                 if value >= date(ANALYSIS_START_YEAR, 1, 1)}
+        # One year for training and three non-overlapping 13-week test windows.
+        history_weeks = 52 + 3 * 13
+        hana_status = next((check["Status"] for check in self.checks
+                            if check["id"] == "hana_reconciliation"), None)
+        hana = {"Bestätigt": "passed", "Nicht bestanden": "failed"}.get(hana_status, "pending")
+        results = []
+        for metric, issue_rows, amount_share in (
+            ("Fälle", common, 0), ("Lückentage", day_issues, day_share)
+        ):
+            row_share = issue_rows.mean() if len(issue_rows) else 1
+            impact = max(row_share, amount_share)
+            quality = "passed" if impact <= 0.05 else "failed" if impact >= 0.20 else "pending"
+            backtest = {True: "passed", False: "failed"}.get((backtest_results or {}).get(metric), "pending")
+            quality_detail = f"{row_share:.1%} betroffene Zeilen"
+            if metric == "Lückentage":
+                quality_detail += f", {amount_share:.1%} des absoluten Tagesvolumens dieser Rohdaten"
+            criteria = [
+                ("Datenqualität", quality, quality_detail.replace(".", ",") + " · bis 5 % erfüllt, ab 20 % kritisch"),
+                ("IPL-Historie", "passed" if len(weeks) >= history_weeks else "failed",
+                 f"{len(weeks)} von mindestens {history_weeks} beobachteten IPL-Wochen seit {ANALYSIS_START_YEAR}"),
+                ("SAP-HANA-Abgleich", hana, "Kontrollanzahl und Kontrollsumme für denselben Datenstand"),
+                ("Historische Prognoseprüfung", backtest, "Fehler des kumulierten Zuwachses am Stichtag"),
+            ]
+            passed = sum(status == "passed" for _, status, _ in criteria)
+            status = "failed" if any(state == "failed" for _, state, _ in criteria) else (
+                "passed" if passed == len(criteria) else "pending"
+            )
+            results.append((metric, 100 * passed // len(criteria), status, criteria))
+        return results
+
     def records(self, check_id, page=0, size=100, sort_model=None, filter_model=None):
         mask = self.masks.get(check_id, self.affected)
         selected = self.source.loc[mask]
@@ -110,7 +160,7 @@ class QualityReport:
         return records, len(selected), page
 
 
-def build_quality_report(source, year="all", sachverhalt="all"):
+def build_quality_report(source, year="all", sachverhalt="all", hana_controls=None):
     source = source.copy().reset_index(drop=True)
     dates = {}
     for column in DATES:
@@ -281,6 +331,13 @@ def build_quality_report(source, year="all", sachverhalt="all"):
         "Abfragezeitpunkt und dieselben Filter liegen nicht vor. "
         "Die Anzahl vorhandener Datensätze allein bestätigt keine vollständige Auslieferung.", [])
     checks[-1]["Status"] = "Nicht geprüft"
+    if hana_controls is not None:
+        row_count, day_sum = hana_controls
+        checks[-1]["Status"] = "Bestätigt"
+        checks[-1]["Auswirkung"] = (
+            "Beim Import mit SAP HANA abgeglichen. "
+            f"Gesamte Lieferung RSA / 4.15.1 mit {row_count} Zeilen und {day_sum:f} Lückentagen."
+        )
     return QualityReport(source.loc[selected], {k: v.loc[selected] for k, v in dates.items()},
                          checks, {k: v.loc[selected] for k, v in masks.items()}, affected.loc[selected], coverage)
 
@@ -289,12 +346,21 @@ def build_quality_report(source, year="all", sachverhalt="all"):
 def _source_snapshot(path, modified, size):
     columns = ", ".join(f'"{c}"' for c in RAW_BESTAND_COLUMNS)
     with database_connection(read_only=True, path=path) as connection:
-        return connection.execute(f"SELECT {columns} FROM raw_bestand").df()
+        source = connection.execute(f"SELECT {columns} FROM raw_bestand").df()
+        has_controls = connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?",
+            [HANA_CONTROL_TABLE],
+        ).fetchone()[0]
+        controls = connection.execute(
+            f"SELECT row_count, day_sum FROM {HANA_CONTROL_TABLE}"
+        ).fetchone() if has_controls else None
+        return source, controls
 
 
 @lru_cache(maxsize=4)
 def _report_snapshot(path, modified, size, year, sachverhalt):
-    return build_quality_report(_source_snapshot(path, modified, size), year, sachverhalt)
+    source, controls = _source_snapshot(path, modified, size)
+    return build_quality_report(source, year, sachverhalt, hana_controls=controls)
 
 
 def load_quality_report(year="all", sachverhalt="all"):

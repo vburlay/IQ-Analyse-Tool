@@ -20,8 +20,9 @@ from pack.forecast_runs import (
     load_latest_forecast_run,
     save_forecast_run,
 )
-from pack.hana_import import clear_local_database, ensure_local_database, refresh_from_hana
+from pack.hana_import import HanaImportError, clear_local_database, ensure_local_database, refresh_from_hana
 from pack.services.forecast_service import calculate_stichtag_forecast
+from pack.services.quality_service import load_quality_report
 from pack.ui.callbacks import register_callbacks
 from pack.ui.forecast import CURRENT_RUN_MESSAGE, forecast_detail_grid_data, render_forecast_tab
 
@@ -32,6 +33,7 @@ class ForecastRunsTests(unittest.TestCase):
         database = str(Path(directory) / "test.db")
         self.enterContext(patch("pack.data_access.DB_PATH", database))
         self.enterContext(patch("pack.hana_import.DB_PATH", database))
+        self.enterContext(patch("pack.services.quality_service.DB_PATH", database))
         ensure_local_database()
         self.calculation = {
             "current_cases": 10.0,
@@ -114,13 +116,25 @@ class ForecastRunsTests(unittest.TestCase):
         frame["/BIC/YBWRFTAGE"] = "10"
         frame["/BIC/YBWRIPL"] = "20251006"
         frame["/BIC/YBWRSV"] = "000"
+        frame.attrs["hana_controls"] = (1, Decimal("10"))
         with patch("pack.hana_import._load_hana_frame", return_value=frame):
             self.assertEqual(refresh_from_hana("test", "test"), 1)
+        mismatch = frame.copy()
+        mismatch.attrs["hana_controls"] = (1, Decimal("11"))
+        with patch("pack.hana_import._load_hana_frame", return_value=mismatch):
+            with self.assertRaisesRegex(HanaImportError, "SAP-HANA-Abgleich fehlgeschlagen"):
+                refresh_from_hana("test", "test")
+        report = load_quality_report()
+        hana_check = next(check for check in report.checks if check["id"] == "hana_reconciliation")
+        self.assertEqual(hana_check["Status"], "Bestätigt")
         self.assertEqual(load_forecast_runs(), [run])
         forecast = calculate_stichtag_forecast("000", "2025-11-01", 90, 2025)
         self.assertEqual(forecast["data_cutoff"], date(2025, 10, 3))
         self.assertEqual(forecast["calculation_date"].date(), date(2025, 9, 29))
         clear_local_database()
+        report = load_quality_report()
+        hana_check = next(check for check in report.checks if check["id"] == "hana_reconciliation")
+        self.assertEqual(hana_check["Status"], "Nicht geprüft")
         self.assertEqual(load_forecast_runs(), [])
         with database_connection(read_only=True) as connection:
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM raw_bestand").fetchone()[0], 0)

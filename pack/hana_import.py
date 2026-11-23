@@ -17,6 +17,7 @@ from pack.config import (
 
 from pack.data_access import database_connection
 from pack.forecast_runs import SCHEMA, clear_forecast_runs
+from pack.services.quality_service import HANA_CONTROL_TABLE
 
 
 class HanaImportError(RuntimeError):
@@ -79,6 +80,7 @@ def validate_raw_bestand(data: pd.DataFrame) -> pd.DataFrame:
 
 
 def _replace_raw_data(data: pd.DataFrame) -> None:
+    controls = data.attrs.get("hana_controls")
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     with database_connection(path=DB_PATH) as connection:
         connection.begin()
@@ -92,6 +94,19 @@ def _replace_raw_data(data: pd.DataFrame) -> None:
             ).fetchone()[0]
             if imported != len(data):
                 raise HanaImportError("Die lokale Datenprüfung ist fehlgeschlagen.")
+            connection.execute(f"DROP TABLE IF EXISTS {HANA_CONTROL_TABLE}")
+            if controls is not None:
+                local = connection.execute(
+                    f'SELECT COUNT(*), SUM(CAST("/BIC/YBWRFTAGE" AS DECIMAL(38, 6))) FROM "{TABLE_RAW}"'
+                ).fetchone()
+                if local != controls:
+                    raise HanaImportError(
+                        "SAP-HANA-Abgleich fehlgeschlagen. Lokale Daten bleiben unverändert."
+                    )
+                connection.execute(
+                    f"CREATE TABLE {HANA_CONTROL_TABLE} (row_count BIGINT, day_sum DECIMAL(38, 6))"
+                )
+                connection.execute(f"INSERT INTO {HANA_CONTROL_TABLE} VALUES (?, ?)", controls)
             connection.execute(SCHEMA)
             connection.commit()
         except Exception:
@@ -114,6 +129,7 @@ def clear_local_database() -> None:
         connection.begin()
         try:
             connection.execute(f'DELETE FROM "{TABLE_RAW}"')
+            connection.execute(f"DROP TABLE IF EXISTS {HANA_CONTROL_TABLE}")
             clear_forecast_runs(connection)
             connection.commit()
         except Exception:
@@ -137,7 +153,9 @@ def _load_hana_frame(username: str, password: str) -> pd.DataFrame:
     columns_sql = ", ".join(_quote_identifier(column) for column in RAW_BESTAND_COLUMNS)
     source_sql = f"{_quote_identifier(HANA_SCHEMA)}.{_quote_identifier(HANA_TABLE)}"
     query = f'''
-        SELECT {columns_sql}
+        SELECT {columns_sql},
+               COUNT(*) OVER () AS CONTROL_ROWS,
+               SUM(CAST("/BIC/YBWRFTAGE" AS DECIMAL(38, 6))) OVER () AS CONTROL_DAYS
         FROM {source_sql}
         WHERE "/BIC/YBWRSEL" = ? AND "/BIC/YBWRIQIQ" = ?
     '''
@@ -154,12 +172,18 @@ def _load_hana_frame(username: str, password: str) -> pd.DataFrame:
         cursor = connection.cursor()
         cursor.execute(query, ("4.15.1", "RSA"))
         frames: list[pd.DataFrame] = []
+        controls = None
         while True:
             rows = cursor.fetchmany(10_000)
             if not rows:
                 break
-            frames.append(pd.DataFrame.from_records(rows, columns=RAW_BESTAND_COLUMNS))
-        return pd.concat(frames, ignore_index=True) if frames else _empty_raw_bestand_frame()
+            controls = tuple(rows[0][-2:])
+            frames.append(pd.DataFrame.from_records(
+                [row[:-2] for row in rows], columns=RAW_BESTAND_COLUMNS
+            ))
+        data = pd.concat(frames, ignore_index=True) if frames else _empty_raw_bestand_frame()
+        data.attrs["hana_controls"] = controls
+        return data
     except Exception as exc:
         raise HanaImportError("Anmeldung oder Datenabruf bei SAP HANA fehlgeschlagen.") from exc
     finally:

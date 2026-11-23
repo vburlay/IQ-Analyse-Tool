@@ -118,7 +118,51 @@ def render_quality_tab():
     return layout
 
 
+def forecast_readiness_card(report):
+    statuses = {
+        "passed": ("✓ Bereit", "✓ Erfüllt", "#307450"),
+        "pending": ("Vorläufig", "Offen / prüfen", "#895d16"),
+        "failed": ("Nicht bereit", "Nicht erfüllt", "#a33838"),
+    }
+    scores = report.forecast_readiness()
+    return html.Div([
+        html.Div("Regelmäßige Prognose", className="quality-kpi-label"),
+        *[
+            html.Div([
+                html.Strong(metric),
+                html.Span(
+                    statuses[criteria[0][1]][1],
+                    style={"color": statuses[criteria[0][1]][2]},
+                    title="Datenqualität",
+                ),
+                html.Span(
+                    f"{sum(state == 'passed' for _, state, _ in criteria)}/"
+                    f"{len(criteria)} · {statuses[status][0]}",
+                    style={"color": statuses[status][2]},
+                    title="Bestätigte Prüfungen",
+                ),
+            ], className="quality-readiness-row")
+            for metric, _, status, criteria in scores
+        ],
+        html.Details([
+            html.Summary("Bewertung ansehen"),
+            html.P("Vorprüfung für einen Prognosehorizont von 13 Wochen."),
+            *[
+                html.Div([
+                    html.Strong(metric),
+                    html.Ul([
+                        html.Li(f"{label} · {statuses[status][1]}. {detail}")
+                        for label, status, detail in criteria
+                    ]),
+                ])
+                for metric, _, _, criteria in scores
+            ],
+        ], className="quality-readiness-details"),
+    ], className="quality-readiness-card")
+
+
 def overview_content(report):
+    hana_check = next(check for check in report.checks if check["id"] == "hana_reconciliation")
     source = report.source
     keys = source[["/B99/S_BWPKKD", "/BIC/YBWRAVON"]]
     valid = keys.notna().all(axis=1) & keys.iloc[:, 0].astype(str).str.strip().ne("")
@@ -163,21 +207,21 @@ def overview_content(report):
         timeline.update_xaxes(range=[start_date, times[-1] + timedelta(days=7)])
     def metric(label, value, detail, color):
         return html.Div([
-            html.Div(label, style={"fontSize": "13px", "fontWeight": "600", "color": "#607286"}),
-            html.Div(value, style={"fontSize": "30px", "fontWeight": "700", "color": color, "lineHeight": "1.3", "margin": "9px 0"}),
-            html.Div(detail, style={"fontSize": "12px", "color": "#718096"}),
-        ], style={"flex": "1 1 220px", "padding": "18px 20px", "backgroundColor": "#f6f8fb",
-                  "border": "1px solid #e2e8f0", "borderRadius": "8px", "boxSizing": "border-box"})
+            html.Div(label, className="quality-kpi-label"),
+            html.Div(value, className="quality-kpi-value", style={"color": color}),
+            html.Div(detail, className="quality-kpi-detail"),
+        ], className="quality-kpi-card")
 
     cards = html.Div([
         metric("Geprüfte Daten", f"{len(source):,}".replace(",", "."),
-               f"{total_cases:,} eindeutige Fälle mit gültigem Schlüssel".replace(",", "."), "#245778"),
+               f"{total_cases:,} Fälle mit gültigem Schlüssel".replace(",", "."), "#245778"),
         metric("Fälle mit Prüfbedarf", f"{affected_cases:,}".replace(",", "."),
                f"{int(report.affected.sum()):,} betroffene Datensätze".replace(",", "."), "#a26c20" if active else "#307450"),
         metric("Anteil betroffener Fälle",
                f"{affected_cases / total_cases:.1%}".replace(".", ",") if total_cases else "—",
-               "Fehler und Prüfhinweise, ohne Informationsmeldungen", "#a26c20" if active else "#307450"),
-    ], style={"display": "flex", "flexWrap": "wrap", "gap": "14px", "marginBottom": "24px"})
+               "Fehler und Prüfhinweise", "#a26c20" if active else "#307450"),
+        forecast_readiness_card(report),
+    ], className="quality-kpi-strip")
     findings = []
     for check in active[:3]:
         findings.append(html.Div([
@@ -228,9 +272,8 @@ def overview_content(report):
             className="ag-theme-alpine", style={"height": "clamp(420px, 55vh, 740px)"},
         ),
         html.Div([
-            html.Strong("Vollständigkeitsabgleich mit SAP HANA: nicht geprüft."),
-            html.Div("Für eine Bestätigung werden Kontrollanzahl und Kontrollsumme aus HANA "
-                     "zum selben Abfragezeitpunkt und mit denselben Filtern benötigt."),
+            html.Strong(f"{hana_check['Prüfung']} · {hana_check['Status']}"),
+            html.Div(hana_check["Auswirkung"]),
         ], style={"marginTop": "18px", "padding": "14px 18px", "backgroundColor": "#f0f5fa",
                   "borderRadius": "8px", "fontSize": "13px"}),
         html.Details([
