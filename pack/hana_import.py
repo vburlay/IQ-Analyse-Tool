@@ -207,6 +207,15 @@ def _load_hana_frame(username: str, password: str) -> pd.DataFrame:
                SUM(CAST("/BIC/YBWRFTAGE" AS DECIMAL(38, 6))) OVER () AS CONTROL_DAYS
         FROM {source_sql}
         WHERE "/BIC/YBWRSEL" = ? AND "/BIC/YBWRIQIQ" = ?
+          AND CASE
+                WHEN "/BIC/YBWRABIS" < "/BIC/YBWRAVON"
+                 AND (
+                    TRIM(CAST("{WVGRD_COLUMN}" AS NVARCHAR(3))) IN ('101', '106', '107')
+                    OR COALESCE(TRIM(CAST("{MSD_COLUMN}" AS NVARCHAR(32))), '')
+                       NOT IN ('', '00000000', '0000-00-00', '00.00.0000')
+                 )
+                THEN 0 ELSE 1
+              END = 1
     '''
 
     connection = None

@@ -7,10 +7,42 @@ import duckdb
 import pandas as pd
 
 from pack.config import RAW_BESTAND_COLUMNS
-from pack.hana_import import HanaImportError, clear_local_database, ensure_local_database, validate_raw_bestand
+from pack.hana_import import (
+    HanaImportError, _load_hana_frame, clear_local_database, ensure_local_database, validate_raw_bestand,
+)
 
 
 class HanaImportTests(unittest.TestCase):
+    def test_hana_filter_excludes_only_reversed_periods_with_reason_or_msd(self):
+        connection = duckdb.connect()
+        self.addCleanup(connection.close)
+        connection.execute("CREATE SCHEMA sap")
+        columns_sql = ", ".join(f'"{column}" VARCHAR' for column in RAW_BESTAND_COLUMNS)
+        connection.execute(f"CREATE TABLE sap.source({columns_sql})")
+        connection.executemany(
+            '''INSERT INTO sap.source (
+                "/BIC/YBWRSEL", "/BIC/YBWRIQIQ", "/BIC/YBWRAVON",
+                "/BIC/YBWRABIS", "/BIC/YBWRWVGRD", "/BIC/YBWRMSD", "/BIC/YBWRFTAGE"
+            ) VALUES ('4.15.1', 'RSA', '20260101', ?, ?, ?, ?)''',
+            [
+                ("20251231", "101", None, "1"),
+                ("20251231", "106", None, "2"),
+                ("20251231", "107", None, "3"),
+                ("20251231", None, "20260201", "4"),
+                ("20251231", "999", "00000000", "10"),
+                ("20261231", "101", "20260201", "20"),
+                (None, "107", "20260201", "30"),
+            ],
+        )
+        with (
+            patch.multiple("pack.hana_import", HANA_HOST="test", HANA_PORT=30015,
+                           HANA_SCHEMA="sap", HANA_TABLE="source"),
+            patch("hdbcli.dbapi.connect", return_value=connection),
+        ):
+            frame = _load_hana_frame("test", "test")
+        self.assertEqual(set(frame["/BIC/YBWRFTAGE"]), {"10", "20", "30"})
+        self.assertEqual(frame.attrs["hana_controls"], (3, 60))
+
     def test_validation_requires_all_application_columns(self):
         with self.assertRaises(HanaImportError):
             validate_raw_bestand(pd.DataFrame({"/B99/S_BWPKKD": ["1"]}))

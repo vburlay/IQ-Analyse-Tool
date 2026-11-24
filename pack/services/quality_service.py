@@ -342,7 +342,7 @@ def build_quality_report(source, year="all", sachverhalt="all", hana_controls=No
         checks[-1]["Status"] = "Bestätigt"
         checks[-1]["Auswirkung"] = (
             "Beim Import mit SAP HANA abgeglichen. "
-            f"Gesamte Lieferung RSA / 4.15.1 mit {row_count} Zeilen und {day_sum:f} Lückentagen."
+            f"Importauswahl RSA / 4.15.1 mit {row_count} Zeilen und {day_sum:f} Lückentagen."
         )
     return QualityReport(source.loc[selected], {k: v.loc[selected] for k, v in dates.items()},
                          checks, {k: v.loc[selected] for k, v in masks.items()}, affected.loc[selected], coverage)
