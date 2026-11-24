@@ -19,7 +19,7 @@ aus einer SAP-HANA-Tabelle aktualisiert werden.
 - Auswahl von Ankerjahr, Sachverhalt, Stichtag und Intervallniveau
 - Abgrenzung der Kohorte über die Überschneidung des Ankerzeitraums mit dem
   gewählten Ankerjahr
-- eindeutiger Fallschlüssel aus `BWPKKD + Ankerbeginn`
+- eindeutiger Fallschlüssel aus `BWPKKD + Ankerbeginn + YBWRIQBPS + YBWRBPF`
 - direkte Verwendung von `/BIC/YBWRELAD` als `erstes_ladedatum`
 - einmalige Berücksichtigung jedes Falls in der Prognose, auch wenn er in
   mehreren IPL-Snapshots enthalten ist

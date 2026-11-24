@@ -116,6 +116,10 @@ class ForecastRunsTests(unittest.TestCase):
         frame["/BIC/YBWRFTAGE"] = "10"
         frame["/BIC/YBWRIPL"] = "20251006"
         frame["/BIC/YBWRSV"] = "000"
+        frame["/BIC/YBWRMSD"] = "00000000"
+        frame["/BIC/YBWRWVGRD"] = "001"
+        frame["/BIC/YBWRIQBPS"] = ""
+        frame["/BIC/YBWRBPF"] = None
         frame.attrs["hana_controls"] = (1, Decimal("10"))
         with patch("pack.hana_import._load_hana_frame", return_value=frame):
             self.assertEqual(refresh_from_hana("test", "test"), 1)

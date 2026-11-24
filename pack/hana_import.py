@@ -6,13 +6,19 @@ from pathlib import Path
 import pandas as pd
 
 from pack.config import (
+    CASE_EXTRA_KEY_COLUMNS,
+    CASE_EXTRA_KEY_LENGTH,
+    CASE_REQUIRED_KEY_COLUMNS,
     DB_PATH,
     HANA_HOST,
     HANA_PORT,
     HANA_SCHEMA,
     HANA_TABLE,
+    MSD_COLUMN,
     RAW_BESTAND_COLUMNS,
     TABLE_RAW,
+    WVGRD_COLUMN,
+    WVGRD_LENGTH,
 )
 
 from pack.data_access import database_connection
@@ -43,25 +49,42 @@ def validate_raw_bestand(data: pd.DataFrame) -> pd.DataFrame:
     if validated.empty:
         raise HanaImportError("Die SAP-HANA-Tabelle enthält keine Daten.")
 
-    required_keys = ["/B99/S_BWPKKD", "/BIC/YBWRAVON"]
+    required_keys = list(CASE_REQUIRED_KEY_COLUMNS)
     missing_key = validated[required_keys].isna() | validated[required_keys].astype(str).apply(
         lambda column: column.str.strip().eq("")
     )
     if missing_key.any(axis=None):
-        raise HanaImportError("Der Fallschlüssel BWPKKD + Ankerbeginn enthält Leerwerte.")
+        raise HanaImportError("BWPKKD oder Ankerbeginn enthält Leerwerte.")
+    for column in CASE_EXTRA_KEY_COLUMNS:
+        values = validated[column].astype("string")
+        values = values.mask(values.str.strip().eq("").fillna(False))
+        if values.str.len().gt(CASE_EXTRA_KEY_LENGTH).any():
+            raise HanaImportError(f"{column}: maximal {CASE_EXTRA_KEY_LENGTH} Zeichen erlaubt.")
+        validated[column] = values
+
+    reason = validated[WVGRD_COLUMN].astype("string")
+    if reason.str.len().gt(WVGRD_LENGTH).any():
+        raise HanaImportError(f"{WVGRD_COLUMN}: maximal {WVGRD_LENGTH} Zeichen erlaubt.")
+    validated[WVGRD_COLUMN] = reason
 
     for column, label in (
         ("/BIC/YBWRAVON", "Ankerbeginn"),
         ("/BIC/YBWRELAD", "Erstes Ladedatum"),
         ("/BIC/YBWRABIS", "Ankerende"),
+        (MSD_COLUMN, "YBWRMSD"),
     ):
         values = validated[column].astype("string").str.strip()
+        if column == MSD_COLUMN:
+            values = values.mask(values.isin(["", "00000000", "0000-00-00", "00.00.0000"]))
         dotted = values.str.fullmatch(r"\d{2}\.\d{2}\.\d{4}", na=False)
         dates = pd.to_datetime(values.where(~dotted), format="mixed", errors="coerce")
         dates.loc[dotted] = pd.to_datetime(
             values.loc[dotted], format="%d.%m.%Y", errors="coerce"
         )
-        invalid_count = int(dates.isna().sum())
+        invalid = dates.isna()
+        if column == MSD_COLUMN:
+            invalid &= values.notna()
+        invalid_count = int(invalid.sum())
         if invalid_count:
             raise HanaImportError(
                 f"{label} ({column}): {invalid_count} fehlende oder ungültige Datumswerte."
@@ -86,8 +109,13 @@ def _replace_raw_data(data: pd.DataFrame) -> None:
         connection.begin()
         try:
             connection.register("raw_bestand_import", data)
+            columns_sql = ", ".join(
+                f'CAST("{column}" AS DATE) AS "{column}"'
+                if column in ("/BIC/YBWRAVON", MSD_COLUMN) else f'"{column}"'
+                for column in RAW_BESTAND_COLUMNS
+            )
             connection.execute(
-                f'CREATE OR REPLACE TABLE "{TABLE_RAW}" AS SELECT * FROM raw_bestand_import'
+                f'CREATE OR REPLACE TABLE "{TABLE_RAW}" AS SELECT {columns_sql} FROM raw_bestand_import'
             )
             imported = connection.execute(
                 f'SELECT COUNT(*) FROM "{TABLE_RAW}"'
@@ -119,7 +147,28 @@ def ensure_local_database() -> bool:
         _replace_raw_data(_empty_raw_bestand_frame())
     else:
         with database_connection(path=DB_PATH) as connection:
-            connection.execute(SCHEMA)
+            connection.begin()
+            try:
+                columns = {row[0]: row[1] for row in connection.execute(f'DESCRIBE "{TABLE_RAW}"').fetchall()}
+                if "/B99/S_BWSTKZ" in columns:
+                    connection.execute(f'ALTER TABLE "{TABLE_RAW}" DROP COLUMN "/B99/S_BWSTKZ"')
+                new_columns = {
+                    **dict.fromkeys(CASE_EXTRA_KEY_COLUMNS, f"VARCHAR({CASE_EXTRA_KEY_LENGTH})"),
+                    WVGRD_COLUMN: f"VARCHAR({WVGRD_LENGTH})",
+                    MSD_COLUMN: columns["/BIC/YBWRAVON"],
+                }
+                for column, column_type in new_columns.items():
+                    if column not in columns:
+                        connection.execute(
+                            f'ALTER TABLE "{TABLE_RAW}" ADD COLUMN "{column}" {column_type}'
+                        )
+                if new_columns.keys() - columns.keys():
+                    connection.execute(f"DROP TABLE IF EXISTS {HANA_CONTROL_TABLE}")
+                connection.execute(SCHEMA)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
     return True
 
 

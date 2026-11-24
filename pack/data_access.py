@@ -10,6 +10,8 @@ import pandas as pd
 
 from pack.config import (
     ANALYSIS_START_YEAR,
+    CASE_EXTRA_KEY_COLUMNS,
+    CASE_KEY_COLUMNS,
     DB_PATH,
     DB_RETRIES,
     DB_RETRY_DELAY,
@@ -18,6 +20,11 @@ from pack.config import (
 
 
 DATABASE_LOCK = RLock()
+CASE_EXTRA_KEY_SQL = ", ".join(f'"{column}"' for column in CASE_EXTRA_KEY_COLUMNS)
+CASE_EXTRA_KEY_SELECT = ", ".join(
+    f'''CASE WHEN TRIM("{column}") = '' THEN NULL ELSE "{column}" END AS "{column}"'''
+    for column in CASE_EXTRA_KEY_COLUMNS
+)
 
 
 @contextmanager
@@ -100,6 +107,7 @@ def load_anchor_cohort_weekly_data(
         SELECT
             "/B99/S_BWPKKD" AS bw_case_id,
             CAST("/BIC/YBWRAVON" AS DATE) AS ankerbeginn,
+            {CASE_EXTRA_KEY_SELECT},
             CAST("/BIC/YBWRELAD" AS DATE) AS erstes_ladedatum,
             TRY_CAST("/BIC/YBWRFTAGE" AS DOUBLE) AS lueckentage,
             STRPTIME(CAST("/BIC/YBWRIPL" AS VARCHAR), '%Y%m%d') AS ipl_datum
@@ -115,7 +123,7 @@ def load_anchor_cohort_weekly_data(
             MAX(erstes_ladedatum) AS latest_load_date,
             ARG_MAX(lueckentage, ipl_datum) AS lueckentage
         FROM selected
-        GROUP BY bw_case_id, ankerbeginn
+        GROUP BY bw_case_id, ankerbeginn, {CASE_EXTRA_KEY_SQL}
     )
     SELECT
         STRFTIME(
@@ -165,6 +173,7 @@ def load_anchor_cohort_case_data(
         SELECT
             "/B99/S_BWPKKD" AS bw_case_id,
             CAST("/BIC/YBWRAVON" AS DATE) AS ankerbeginn,
+            {CASE_EXTRA_KEY_SELECT},
             CAST("/BIC/YBWRELAD" AS DATE) AS erstes_ladedatum,
             TRY_CAST("/BIC/YBWRFTAGE" AS DOUBLE) AS lueckentage,
             STRPTIME(CAST("/BIC/YBWRIPL" AS VARCHAR), '%Y%m%d') AS ipl_datum
@@ -176,10 +185,11 @@ def load_anchor_cohort_case_data(
     SELECT
         bw_case_id,
         ankerbeginn,
+        {CASE_EXTRA_KEY_SQL},
         ANY_VALUE(erstes_ladedatum) AS erstes_ladedatum,
         ARG_MAX(lueckentage, ipl_datum) AS lueckentage
     FROM selected
-    GROUP BY bw_case_id, ankerbeginn
+    GROUP BY bw_case_id, ankerbeginn, {CASE_EXTRA_KEY_SQL}
     ORDER BY erstes_ladedatum, bw_case_id, ankerbeginn
     '''
     df = duck_query_df(sql, params)
@@ -197,6 +207,7 @@ def load_anchor_year_diagnostics(anchor_year: int) -> pd.DataFrame:
         SELECT
             "/B99/S_BWPKKD" AS bw_case_id,
             CAST("/BIC/YBWRAVON" AS DATE) AS ankerbeginn,
+            {CASE_EXTRA_KEY_SELECT},
             CAST("/BIC/YBWRABIS" AS DATE) AS ankerende,
             CAST("/BIC/YBWRELAD" AS DATE) AS erstes_ladedatum,
             STRPTIME(CAST("/BIC/YBWRIPL" AS VARCHAR), '%Y%m%d') AS ipl_datum
@@ -207,12 +218,16 @@ def load_anchor_year_diagnostics(anchor_year: int) -> pd.DataFrame:
         SELECT
             bw_case_id,
             ankerbeginn,
+            {CASE_EXTRA_KEY_SQL},
             ARG_MAX(ankerende, ipl_datum) AS ankerende,
             ANY_VALUE(erstes_ladedatum) AS erstes_ladedatum
         FROM selected
-        GROUP BY bw_case_id, ankerbeginn
+        GROUP BY bw_case_id, ankerbeginn, {CASE_EXTRA_KEY_SQL}
     )
     SELECT
+        bw_case_id AS "/B99/S_BWPKKD",
+        ankerbeginn AS "/BIC/YBWRAVON",
+        {CASE_EXTRA_KEY_SQL},
         ankerbeginn,
         ankerende,
         erstes_ladedatum,
@@ -295,20 +310,23 @@ def load_anomaly_raw_records(week, anchor_year, sachverhalt, expected_cases, exp
     source = duck_query_df(f'SELECT {columns} FROM {TABLE_RAW} WHERE {where}', params)
     if source.empty:
         raise ValueError("Die Daten wurden geändert. Bitte die Prognose erneut berechnen.")
-    keys = ["/B99/S_BWPKKD", "/BIC/YBWRAVON"]
+    keys = list(CASE_KEY_COLUMNS)
     source["_anchor"] = pd.to_datetime(source[keys[1]], errors="raise")
     source["_load"] = pd.to_datetime(source["/BIC/YBWRELAD"], errors="raise")
     source["_ipl"] = pd.to_datetime(source["/BIC/YBWRIPL"].astype(str), format="%Y%m%d", errors="raise")
-    group_keys = [keys[0], "_anchor"]
-    load_counts = source.groupby(group_keys)["_load"].transform("nunique")
+    for column in CASE_EXTRA_KEY_COLUMNS:
+        values = source[column].astype("string")
+        source[column] = values.mask(values.str.strip().eq("").fillna(False))
+    group_keys = [keys[0], "_anchor", *CASE_EXTRA_KEY_COLUMNS]
+    load_counts = source.groupby(group_keys, dropna=False)["_load"].transform("nunique")
     in_week = source["_load"].ge(week_start) & source["_load"].lt(week_start + pd.Timedelta(days=7))
     if (load_counts[in_week] > 1).any():
         raise ValueError("Erstes Ladedatum ist je Fallschlüssel nicht eindeutig. Eine genaue Zuordnung ist nicht möglich.")
     cohort = source.loc[in_week].copy()
-    latest = cohort.groupby(group_keys)["_ipl"].transform("max")
+    latest = cohort.groupby(group_keys, dropna=False)["_ipl"].transform("max")
     cohort = cohort.loc[cohort["_ipl"].eq(latest)]
     result = cohort.loc[:, list(RAW_BESTAND_COLUMNS)].drop_duplicates()
-    if result.duplicated(keys).any():
+    if cohort.drop_duplicates(list(RAW_BESTAND_COLUMNS)).duplicated(group_keys).any():
         raise ValueError(
             "Mehrere unterschiedliche Rohdatensätze im letzten IPL je Fall. "
             "Für eine eindeutige Auswahl fehlt ein zusätzlicher Quellschlüssel."

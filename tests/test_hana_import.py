@@ -7,7 +7,7 @@ import duckdb
 import pandas as pd
 
 from pack.config import RAW_BESTAND_COLUMNS
-from pack.hana_import import HanaImportError, clear_local_database, validate_raw_bestand
+from pack.hana_import import HanaImportError, clear_local_database, ensure_local_database, validate_raw_bestand
 
 
 class HanaImportTests(unittest.TestCase):
@@ -21,10 +21,14 @@ class HanaImportTests(unittest.TestCase):
         values["/BIC/YBWRELAD"] = ["2025-02-01"]
         values["/BIC/YBWRABIS"] = ["02.04.2025"]
         values["/BIC/YBWRFTAGE"] = ["10"]
+        values["/BIC/YBWRMSD"] = ["20250502"]
+        values["/BIC/YBWRWVGRD"] = ["001"]
         data = pd.DataFrame(values)
         result = validate_raw_bestand(data)
         self.assertEqual(list(result.columns), list(RAW_BESTAND_COLUMNS))
         self.assertEqual(result["/BIC/YBWRABIS"].iloc[0].isoformat(), "2025-04-02")
+        self.assertEqual(result["/BIC/YBWRMSD"].iloc[0].isoformat(), "2025-05-02")
+        self.assertEqual(result["/BIC/YBWRWVGRD"].iloc[0], "001")
 
     def test_validation_rejects_load_date_before_anchor_start(self):
         values = {column: ["x"] for column in RAW_BESTAND_COLUMNS}
@@ -32,6 +36,8 @@ class HanaImportTests(unittest.TestCase):
         values["/BIC/YBWRELAD"] = ["2025-01-01"]
         values["/BIC/YBWRABIS"] = ["20250402"]
         values["/BIC/YBWRFTAGE"] = ["10"]
+        values["/BIC/YBWRMSD"] = ["20250502"]
+        values["/BIC/YBWRWVGRD"] = ["001"]
         with self.assertRaisesRegex(HanaImportError, "liegt vor Ankerbeginn"):
             validate_raw_bestand(pd.DataFrame(values))
 
@@ -57,6 +63,23 @@ class HanaImportTests(unittest.TestCase):
                 self.assertEqual(list(columns), list(RAW_BESTAND_COLUMNS))
             finally:
                 connection.close()
+
+    def test_schema_upgrade_removes_obsolete_field_and_keeps_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "cache.db"
+            columns = (*RAW_BESTAND_COLUMNS[:-2], "/B99/S_BWSTKZ")
+            columns_sql = ", ".join(f'"{column}" VARCHAR' for column in columns)
+            with duckdb.connect(str(database)) as connection:
+                connection.execute(f"CREATE TABLE raw_bestand({columns_sql})")
+                connection.execute('INSERT INTO raw_bestand ("/B99/S_BWPKKD") VALUES (?)', ["case-1"])
+
+            with patch("pack.hana_import.DB_PATH", str(database)):
+                ensure_local_database()
+
+            with duckdb.connect(str(database), read_only=True) as connection:
+                actual_columns = connection.execute("DESCRIBE raw_bestand").fetchdf()["column_name"]
+                self.assertEqual(list(actual_columns), list(RAW_BESTAND_COLUMNS))
+                self.assertEqual(connection.execute('SELECT "/B99/S_BWPKKD" FROM raw_bestand').fetchall(), [("case-1",)])
 
 
 if __name__ == "__main__":

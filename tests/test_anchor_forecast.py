@@ -3,6 +3,7 @@ from datetime import date
 
 from pack.config import ANALYSIS_START_YEAR
 from pack.forecast_runs import ForecastRun
+from pack.hana_import import ensure_local_database
 
 import pandas as pd
 
@@ -23,6 +24,10 @@ from pack.ui.forecast import (
 
 
 class AnchorForecastTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        ensure_local_database()
+
     @staticmethod
     def _parse_number(value: str) -> int:
         return int(value.replace(" €", "").replace(".", ""))
@@ -36,6 +41,8 @@ class AnchorForecastTests(unittest.TestCase):
             FROM (
                 SELECT DISTINCT
                     "/B99/S_BWPKKD",
+                    "/BIC/YBWRIQBPS",
+                    "/BIC/YBWRBPF",
                     CAST("/BIC/YBWRAVON" AS DATE) AS ankerbeginn
                 FROM raw_bestand
                 WHERE CAST("/BIC/YBWRAVON" AS DATE) <= DATE '2025-12-31'
@@ -64,6 +71,8 @@ class AnchorForecastTests(unittest.TestCase):
                     ROW_NUMBER() OVER (
                         PARTITION BY
                             "/B99/S_BWPKKD",
+                            "/BIC/YBWRIQBPS",
+                            "/BIC/YBWRBPF",
                             CAST("/BIC/YBWRAVON" AS DATE)
                         ORDER BY STRPTIME(CAST("/BIC/YBWRIPL" AS VARCHAR), '%Y%m%d') DESC
                     ) AS version_rank
@@ -117,6 +126,8 @@ class AnchorForecastTests(unittest.TestCase):
             FROM (
                 SELECT DISTINCT
                     "/B99/S_BWPKKD",
+                    "/BIC/YBWRIQBPS",
+                    "/BIC/YBWRBPF",
                     CAST("/BIC/YBWRAVON" AS DATE) AS ankerbeginn
                 FROM raw_bestand
                 WHERE CAST("/BIC/YBWRABIS" AS DATE) >= DATE '{ANALYSIS_START_YEAR}-01-01'

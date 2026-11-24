@@ -5,7 +5,8 @@ import plotly.graph_objects as go
 from dash import dcc, html
 import dash_ag_grid as dag
 
-from pack.config import ANALYSIS_START_YEAR, RAW_BESTAND_COLUMNS
+from pack.config import ANALYSIS_START_YEAR, RAW_BESTAND_DISPLAY_COLUMNS
+from pack.services.quality_service import case_key_frame, complete_case_keys
 from pack.ui.styles import PAGE_STYLE, PAGE_WIDTH, CHART_CARD_STYLE, SECTION_STYLE, SUBTITLE_STYLE, BG_COLOR
 
 
@@ -76,7 +77,7 @@ def render_quality_tab():
                     id="quality-evidence", rowData=[],
                     columnDefs=[{"headerName": c, "field": c, "minWidth": 190,
                                  "cellDataType": False, "headerClass": "pivot-highlighted-header"}
-                                for c in RAW_BESTAND_COLUMNS],
+                                for c in RAW_BESTAND_DISPLAY_COLUMNS],
                     defaultColDef={"resizable": True, "sortable": True, "wrapText": True, "autoHeight": True,
                                    "flex": 1,
                                    "comparator": {"function": "0"},
@@ -167,8 +168,8 @@ def forecast_readiness_card(report):
 def overview_content(report):
     hana_check = next(check for check in report.checks if check["id"] == "hana_reconciliation")
     source = report.source
-    keys = source[["/B99/S_BWPKKD", "/BIC/YBWRAVON"]]
-    valid = keys.notna().all(axis=1) & keys.iloc[:, 0].astype(str).str.strip().ne("")
+    keys = case_key_frame(source, report.dates["/BIC/YBWRAVON"])
+    valid = complete_case_keys(keys)
     total_cases = len(keys.loc[valid].drop_duplicates())
     affected_cases = len(keys.loc[valid & report.affected].drop_duplicates())
     active = [check for check in report.checks if check["Zeilen"] and check["Status"] != "Information"]

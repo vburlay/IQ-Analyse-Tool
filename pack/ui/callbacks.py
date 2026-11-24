@@ -8,7 +8,7 @@ from collections import OrderedDict
 from datetime import date
 
 from pack.forecast_runs import ForecastRun, save_forecast_run
-from pack.config import ANALYSIS_START_YEAR
+from pack.config import ANALYSIS_START_YEAR, MSD_COLUMN
 
 from dash import ALL, Input, Output, State, ctx, html, no_update
 
@@ -137,12 +137,12 @@ def register_callbacks(app):
             elif ctx.triggered_id == "quality-next":
                 requested = (page or 0) + 1
             records, count, page = report.records(check_id, requested, sort_model=sort_model, filter_model=filter_model)
-            from pack.config import RAW_BESTAND_COLUMNS
+            from pack.config import RAW_BESTAND_DISPLAY_COLUMNS
             columns = [{
                 "headerName": c, "field": c, "minWidth": 190, "cellDataType": False,
                 "headerClass": "pivot-highlighted-header",
                 **({"cellStyle": {"backgroundColor": "#fff4ce"}} if c in check["columns"] else {}),
-            } for c in RAW_BESTAND_COLUMNS]
+            } for c in RAW_BESTAND_DISPLAY_COLUMNS]
             pages = max(1, (count + 99) // 100)
             return (
                 records, columns if ctx.triggered_id == "quality-check-choice" or not column_state else no_update,
@@ -440,7 +440,7 @@ def register_callbacks(app):
             import json
             raw_rows = json.loads(raw.to_json(orient="records", date_format="iso"))
             for record in raw_rows:
-                for column in ("/BIC/YBWRAVON", "/BIC/YBWRELAD", "/BIC/YBWRABIS", "/BIC/YBWRIPL"):
+                for column in ("/BIC/YBWRAVON", "/BIC/YBWRELAD", "/BIC/YBWRABIS", "/BIC/YBWRIPL", MSD_COLUMN):
                     value = record.get(column)
                     if value is None:
                         continue

@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from dash import dcc, html
 
-from pack.config import EURO_PER_LUECKENTAG, RAW_BESTAND_COLUMNS
+from pack.config import EURO_PER_LUECKENTAG, MSD_COLUMN, RAW_BESTAND_DISPLAY_COLUMNS
 from pack.data_access import load_anchor_cohort_case_data
 from pack.ui.components import make_grid
 from pack.ui.styles import BG_COLOR
@@ -133,11 +133,11 @@ def build_severity_section(sachverhalt, year, start=None, end=None):
             }
     raw_columns = [
         {"headerName": column, "field": column, "minWidth": 190, "cellDataType": False}
-        for column in RAW_BESTAND_COLUMNS
+        for column in RAW_BESTAND_DISPLAY_COLUMNS
     ]
     for column in raw_columns:
         if column["field"] in {
-            "/BIC/YBWRAVON", "/BIC/YBWRELAD", "/BIC/YBWRABIS", "/BIC/YBWRIPL",
+            "/BIC/YBWRAVON", "/BIC/YBWRELAD", "/BIC/YBWRABIS", "/BIC/YBWRIPL", MSD_COLUMN,
         }:
             column["valueFormatter"] = {
                 "function": "params.value == null ? '' : "

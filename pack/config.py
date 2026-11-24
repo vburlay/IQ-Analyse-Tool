@@ -32,6 +32,14 @@ HANA_PORT = int(os.getenv("HANA_PORT", hana_config.get("hana", "port", fallback=
 HANA_SCHEMA = os.getenv("HANA_SCHEMA", hana_config.get("hana", "schema", fallback=""))
 HANA_TABLE = os.getenv("HANA_TABLE", hana_config.get("hana", "table", fallback=""))
 
+CASE_EXTRA_KEY_COLUMNS = ("/BIC/YBWRIQBPS", "/BIC/YBWRBPF")
+CASE_REQUIRED_KEY_COLUMNS = ("/B99/S_BWPKKD", "/BIC/YBWRAVON")
+CASE_KEY_COLUMNS = (*CASE_REQUIRED_KEY_COLUMNS, *CASE_EXTRA_KEY_COLUMNS)
+CASE_EXTRA_KEY_LENGTH = 10
+WVGRD_COLUMN = "/BIC/YBWRWVGRD"
+WVGRD_LENGTH = 3
+MSD_COLUMN = "/BIC/YBWRMSD"
+
 RAW_BESTAND_COLUMNS = (
     "/BIC/YBWRIQIQ",
     "/BIC/YBWRSEL",
@@ -44,7 +52,16 @@ RAW_BESTAND_COLUMNS = (
     "/BIC/YBWRABIS",
     "/BIC/YBWRVA",
     "/BIC/YBWRERGBN",
-    "/B99/S_BWSTKZ",
+    *CASE_EXTRA_KEY_COLUMNS,
+    WVGRD_COLUMN,
+    MSD_COLUMN,
+)
+
+# Keep the complete case key together in the raw-data grids.
+RAW_BESTAND_DISPLAY_COLUMNS = (
+    *RAW_BESTAND_COLUMNS[:3],
+    *CASE_KEY_COLUMNS,
+    *(column for column in RAW_BESTAND_COLUMNS[3:] if column not in CASE_KEY_COLUMNS),
 )
 
 

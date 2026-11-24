@@ -6,11 +6,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from pack.config import ANALYSIS_START_YEAR, DB_PATH, RAW_BESTAND_COLUMNS
+from pack.config import ANALYSIS_START_YEAR, CASE_KEY_COLUMNS, DB_PATH, MSD_COLUMN, RAW_BESTAND_COLUMNS
 from pack.data_access import database_connection
 
-KEY = ["/B99/S_BWPKKD", "/BIC/YBWRAVON"]
+KEY = list(CASE_KEY_COLUMNS)
 DATES = ["/BIC/YBWRAVON", "/BIC/YBWRABIS", "/BIC/YBWRELAD", "/BIC/YBWRIPL"]
+DISPLAY_DATES = (*DATES, MSD_COLUMN)
 HANA_CONTROL_TABLE = "hana_import_controls"
 
 
@@ -125,7 +126,7 @@ class QualityReport:
             if column not in RAW_BESTAND_COLUMNS:
                 raise ValueError("Ungültige Filterspalte")
             values = selected[column]
-            if column in DATES:
+            if column in DISPLAY_DATES:
                 values = self.dates[column].loc[selected.index].map(
                     lambda value: f"{value.day:02d}.{value.month:02d}.{value.year:04d}"
                     if value is not None and pd.notna(value) else ""
@@ -138,7 +139,7 @@ class QualityReport:
                 column = item["colId"]
                 if column not in RAW_BESTAND_COLUMNS or item["sort"] not in ("asc", "desc"):
                     raise ValueError("Ungültige Sortierung")
-                if column in DATES:
+                if column in DISPLAY_DATES:
                     ordering[column] = self.dates[column].loc[selected.index]
                 elif column == "/BIC/YBWRFTAGE":
                     ordering[column] = pd.to_numeric(selected[column], errors="coerce")
@@ -153,17 +154,30 @@ class QualityReport:
             selected.iloc[page * size:(page + 1) * size].notna(), None
         ).to_dict("records")
         for record in records:
-            for column in DATES:
+            for column in DISPLAY_DATES:
                 parsed = parse_source_date(record.get(column))
                 if parsed is not None:
                     record[column] = f"{parsed.day:02d}.{parsed.month:02d}.{parsed.year:04d}"
         return records, len(selected), page
 
 
+def case_key_frame(source, anchor_dates):
+    frame = source[KEY].astype("string")
+    frame[KEY[1]] = anchor_dates
+    return frame
+
+
+def complete_case_keys(frame):
+    return frame[KEY[1]].notna() & frame[KEY[0]].fillna("").str.strip().ne("")
+
+
 def build_quality_report(source, year="all", sachverhalt="all", hana_controls=None):
     source = source.copy().reset_index(drop=True)
+    for column in KEY[2:]:
+        values = source[column].astype("string")
+        source[column] = values.mask(values.str.strip().eq("").fillna(False))
     dates = {}
-    for column in DATES:
+    for column in DISPLAY_DATES:
         values = source[column].astype("string")
         lookup = {value: parse_source_date(value) for value in values.dropna().unique()}
         dates[column] = values.map(lookup).astype(object).where(values.notna(), None)
@@ -177,12 +191,9 @@ def build_quality_report(source, year="all", sachverhalt="all", hana_controls=No
             for a, b in zip(dates[DATES[0]], dates[DATES[1]])
         ], index=source.index)
     # Evaluate key conflicts before filtering so other snapshots remain detectable.
-    key_frame = pd.DataFrame({
-        "id": source[KEY[0]].astype("string"),
-        "anchor": dates[DATES[0]],
-    })
-    valid_key = key_frame["id"].fillna("").str.strip().ne("") & key_frame["anchor"].notna()
-    groups = [key_frame["id"], key_frame["anchor"]]
+    key_frame = case_key_frame(source, dates[DATES[0]])
+    valid_key = complete_case_keys(key_frame)
+    groups = [key_frame[column] for column in KEY]
     load_dates = dates[DATES[2]]
     selected &= load_dates.isna() | load_dates.between(
         date(ANALYSIS_START_YEAR, 1, 1), date(date.today().year, 12, 31)
@@ -213,10 +224,9 @@ def build_quality_report(source, year="all", sachverhalt="all", hana_controls=No
         if severity != "Information":
             affected |= mask
 
-    missing_id = source[KEY[0]].astype("string").fillna("").str.strip().eq("")
     add("key", "Fehlender Fallschlüssel", "Fehler",
-        missing_id | dates[DATES[0]].isna(),
-        "Ohne BWPKKD und Ankerbeginn ist die Fallzählung nicht eindeutig.", KEY)
+        ~valid_key,
+        "BWPKKD und Ankerbeginn sind erforderlich. YBWRIQBPS und YBWRBPF dürfen leer sein.", KEY[:2])
     for column in DATES:
         add("date_" + column, "Nicht lesbares Datum: " + column, "Fehler",
             dates[column].isna(),
@@ -256,11 +266,10 @@ def build_quality_report(source, year="all", sachverhalt="all", hana_controls=No
     add("identical", "Vollständig identische Datensätze", "Information",
         source.duplicated(keep=False), "Wiederholungen beeinflussen Summen aus Rohzeilen; Fallprognosen zählen eindeutige Schlüssel.", list(RAW_BESTAND_COLUMNS))
     distinct = source.drop_duplicates()
-    group_cols = [distinct[KEY[0]], dates[DATES[0]].loc[distinct.index], dates[DATES[3]].loc[distinct.index]]
-    conflicting = distinct.groupby(group_cols, dropna=False)[KEY[0]].transform("size").gt(1)
-    conflict_keys = set(zip(distinct.loc[conflicting, KEY[0]], dates[DATES[0]].loc[distinct.index[conflicting]],
-                            dates[DATES[3]].loc[distinct.index[conflicting]]))
-    mask = pd.Series([k in conflict_keys for k in zip(source[KEY[0]], dates[DATES[0]], dates[DATES[3]])], index=source.index)
+    snapshot_keys = key_frame.assign(ipl=dates[DATES[3]])
+    distinct_keys = snapshot_keys.loc[distinct.index]
+    conflict_keys = pd.MultiIndex.from_frame(distinct_keys.loc[distinct_keys.duplicated(keep=False)])
+    mask = pd.Series(pd.MultiIndex.from_frame(snapshot_keys).isin(conflict_keys), index=source.index)
     add("ipl_conflict", "Unterschiedliche Datensätze je Fall und IPL", "Prüfen", mask & valid_key,
         "Mehrere Datensätze beschreiben denselben Fall im selben Datenstand unterschiedlich. Die gültige Version muss geklärt werden.", list(RAW_BESTAND_COLUMNS))
     add("result_unknown", "Unbekannter Ergebnisschlüssel", "Prüfen",

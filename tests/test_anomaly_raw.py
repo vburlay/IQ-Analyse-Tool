@@ -7,8 +7,11 @@ import duckdb
 import pandas as pd
 from dash import Dash
 
-from pack.config import RAW_BESTAND_COLUMNS
-from pack.data_access import load_anomaly_raw_records
+from pack.config import CASE_KEY_COLUMNS, RAW_BESTAND_COLUMNS
+from pack.data_access import (
+    load_anchor_cohort_weekly_data, load_anchor_year_diagnostics, load_anomaly_raw_records,
+)
+from pack.services.quality_service import build_quality_report
 from pack.ui.callbacks import register_callbacks
 
 
@@ -49,6 +52,34 @@ class AnomalyRawTests(unittest.TestCase):
         self.write([self.row, {**self.row, "/BIC/YBWRVA": "different"}])
         with self.assertRaisesRegex(ValueError, "Quellschlüssel"):
             load_anomaly_raw_records("2025-07-14", 2025, "01a", 1, 100)
+
+    def test_each_additional_key_distinguishes_cases_in_the_same_ipl(self):
+        rows = [
+            self.row,
+            {**self.row, "/BIC/YBWRIQBPS": "0000000001"},
+            {**self.row, "/BIC/YBWRBPF": "0000000002"},
+        ]
+        self.write(rows)
+        weekly = load_anchor_cohort_weekly_data("01a", 2025)
+        self.assertEqual((weekly["FAELLE"].sum(), weekly["TAGEN"].sum()), (3, 300))
+        self.assertEqual(len(load_anomaly_raw_records("2025-07-14", 2025, "01a", 3, 300)), 3)
+        diagnostics = load_anchor_year_diagnostics(2025)
+        self.assertEqual(len(diagnostics[list(CASE_KEY_COLUMNS)].drop_duplicates()), 3)
+        report = build_quality_report(pd.DataFrame(rows))
+        self.assertEqual(report.records("ipl_conflict")[1], 0)
+
+    def test_missing_optional_keys_are_valid_and_blank_and_null_group_together(self):
+        empty_key = {**self.row, **dict.fromkeys(CASE_KEY_COLUMNS[2:])}
+        blank_key = {**empty_key, **dict.fromkeys(CASE_KEY_COLUMNS[2:], " ")}
+        other = {**empty_key, "/BIC/YBWRBPF": "0000000001"}
+        rows = [empty_key, blank_key, other]
+        self.write(rows)
+        weekly = load_anchor_cohort_weekly_data("01a", 2025)
+        self.assertEqual((weekly["FAELLE"].sum(), weekly["TAGEN"].sum()), (2, 200))
+        self.assertEqual(len(load_anomaly_raw_records("2025-07-14", 2025, "01a", 2, 200)), 2)
+        report = build_quality_report(pd.DataFrame(rows))
+        self.assertEqual(report.records("key")[1], 0)
+        self.assertEqual(report.records("ipl_conflict")[1], 0)
 
     def test_changed_load_date_is_rejected_in_raw_details(self):
         older = {
