@@ -13,7 +13,7 @@ DELTA_DOWN_COLOR = "#dc3545"
 # ============================================================
 # LAYOUT CONSTANTS
 # ============================================================
-PAGE_WIDTH = "90%"
+PAGE_WIDTH = "var(--app-page-width, 90%)"
 CARD_RADIUS = "8px"
 CARD_SHADOW = "0 1px 3px rgba(15, 23, 42, 0.08)"
 SECTION_GAP = "24px"
@@ -101,7 +101,8 @@ APP_SHELL_STYLE = {
 
 CONTENT_STYLE = {
     "flex": "1",
-    "padding": "20px",
+    "minWidth": "0",
+    "padding": "clamp(12px, 1.5vw, 20px)",
 }
 
 # ============================================================
@@ -227,7 +228,7 @@ KPI_CONTAINER_STYLE = {
     "width": PAGE_WIDTH,
     "margin": "0 auto 24px auto",
     "display": "grid",
-    "gridTemplateColumns": "repeat(auto-fit, minmax(180px, 1fr))",
+    "gridTemplateColumns": "repeat(auto-fit, minmax(min(100%, 180px), 1fr))",
     "gap": "12px",
     "alignItems": "stretch",
     "boxSizing": "border-box",
@@ -245,7 +246,7 @@ KPI_BASE_STYLE = {
     "flexDirection": "column",
     "justifyContent": "center",
     "alignItems": "flex-start",
-    "height": "78px",
+    "minHeight": "78px",
     "minWidth": "0",
     "overflow": "hidden",
 }
@@ -256,9 +257,7 @@ KPI_TITLE_STYLE = {
     "color": TEXT_MUTED,
     "lineHeight": "1.2",
     "marginBottom": "6px",
-    "whiteSpace": "nowrap",
-    "overflow": "hidden",
-    "textOverflow": "ellipsis",
+    "overflowWrap": "anywhere",
     "width": "100%",
 }
 

@@ -5,7 +5,10 @@ from pack.ui.components import sidebar_button_style
 from pack.ui.callbacks import register_callbacks, SIDEBAR_ITEMS
 from pack.ui.refresh import ensure_database_exists
 
-app = Dash(__name__, title=APP_TITLE, suppress_callback_exceptions=True)
+app = Dash(
+    __name__, title=APP_TITLE, suppress_callback_exceptions=True,
+    meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}],
+)
 server = app.server
 
 ensure_database_exists()
@@ -64,9 +67,11 @@ app.layout = html.Div(
 
         html.Div(
             style=CONTENT_STYLE,
+            className="app-content",
             children=[
                 html.H1(
                     APP_TITLE,
+                    className="app-title",
                     style={
                         "textAlign": "center",
                         "marginTop": "10px",
@@ -96,6 +101,7 @@ app.layout = html.Div(
         ),
     ],
     style=APP_SHELL_STYLE,
+    className="app-shell",
 )
 register_callbacks(
     app=app,

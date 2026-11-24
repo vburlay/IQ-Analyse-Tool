@@ -6,7 +6,7 @@ from dash import dcc, html
 import dash_ag_grid as dag
 
 from pack.config import ANALYSIS_START_YEAR, RAW_BESTAND_COLUMNS
-from pack.ui.styles import PAGE_STYLE, CHART_CARD_STYLE, SECTION_STYLE, SUBTITLE_STYLE, BG_COLOR
+from pack.ui.styles import PAGE_STYLE, PAGE_WIDTH, CHART_CARD_STYLE, SECTION_STYLE, SUBTITLE_STYLE, BG_COLOR
 
 
 QUALITY_GRID_HEIGHT = "clamp(680px, 72vh, 1100px)"
@@ -93,7 +93,7 @@ def render_quality_tab():
                 dcc.Store(id="quality-sort", data=[]),
             ]),
         ]),
-    ], style={**PAGE_STYLE, "width": "90%", "margin": "0 auto",
+    ], style={**PAGE_STYLE, "width": PAGE_WIDTH, "margin": "0 auto",
               "fontFamily": "Inter, Arial, sans-serif", "fontSize": "14px",
               "lineHeight": "1.6", "color": "#2c3e50"}, className="quality-page")
     tabs = layout.children[-1]
