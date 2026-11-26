@@ -1,14 +1,14 @@
 from pack.ui.quality import render_quality_tab, overview_content
-from pack.services.quality_service import load_quality_report
-from pack.data_access import load_anchor_monitoring_cases, load_anomaly_raw_records
+from pack.services.quality_service import DISPLAY_DATES, load_quality_report, parse_source_date, text_filter_mask
+from pack.data_access import load_anchor_monitoring_cases, load_anomaly_raw_records, load_forecast_actual_records
 from pack.ui.anomalies import build_severity_section
 import logging
 import threading
 from collections import OrderedDict
 from datetime import date
 
-from pack.forecast_runs import ForecastRun, save_forecast_run
-from pack.config import ANALYSIS_START_YEAR, MSD_COLUMN
+from pack.forecast_runs import ForecastRun, load_forecast_value_history, save_forecast_run
+from pack.config import ANALYSIS_START_YEAR, MSD_COLUMN, RAW_BESTAND_COLUMNS
 
 from dash import ALL, Input, Output, State, ctx, html, no_update
 
@@ -24,13 +24,16 @@ from pack.ui.components import sidebar_button_style
 from pack.ui.forecast import (
     anchor_graph_components,
     forecast_detail_grid_data,
+    forecast_evidence_grid,
+    forecast_values_data,
+    forecast_value_history_rows,
     CURRENT_RUN_MESSAGE,
     render_forecast_tab,
 )
 from pack.ui.monitoring import build_monitoring_main_fig, monitoring_chart_labels, render_monitoring_tab
 from pack.hana_import import clear_local_database
 from pack.ui.refresh import get_refresh_state, run_hana_refresh, set_refresh_state
-from pack.ui.styles import PAGE_STYLE, SIDEBAR_COLLAPSED_STYLE, SIDEBAR_STYLE
+from pack.ui.styles import PAGE_STYLE, SECTION_STYLE, SIDEBAR_COLLAPSED_STYLE, SIDEBAR_STYLE
 
 
 SIDEBAR_ITEMS = [
@@ -38,6 +41,22 @@ SIDEBAR_ITEMS = [
     ("tab-anchor-forecast", "📈 Prognose"),
     ("tab-quality", "🔎 Datenqualität"),
 ]
+
+
+def format_forecast_raw_records(raw):
+    # Format date columns for the grid without changing the DuckDB records.
+    import json
+    raw_rows = json.loads(raw.to_json(orient="records", date_format="iso"))
+    for record in raw_rows:
+        for column in ("/BIC/YBWRAVON", "/BIC/YBWRELAD", "/BIC/YBWRABIS", "/BIC/YBWRIPL", MSD_COLUMN):
+            value = record.get(column)
+            if value is None:
+                continue
+            text = str(value)
+            compact = text[:10].replace("-", "")
+            if len(compact) == 8 and compact.isdigit():
+                record[column] = f"{compact[6:8]}.{compact[4:6]}.{compact[:4]}"
+    return raw_rows
 
 
 def register_callbacks(app):
@@ -475,6 +494,108 @@ def register_callbacks(app):
         )
 
     @app.callback(
+        Output("forecast-graphs-panel", "style"),
+        Output("forecast-values-panel", "style"),
+        Input("forecast-view", "value"),
+    )
+    def show_forecast_view(view):
+        return (
+            {"display": "none" if view == "values" else "block"},
+            {**SECTION_STYLE, "display": "block" if view == "values" else "none"},
+        )
+
+    @app.callback(
+        Output("forecast-values-grid", "paginationGoTo"),
+        Input("forecast-values-grid", "filterModel"),
+        Input("forecast-values-grid", "rowData"),
+        prevent_initial_call=True,
+    )
+    def reset_forecast_values_page(_filters, _rows):
+        return "first"
+
+    @app.callback(
+        Output("forecast-values-dso-details", "open"),
+        Output("forecast-values-dso-content", "hidden"),
+        Output("forecast-values-dso-anchor", "children"),
+        Output("forecast-values-selection", "data"),
+        Output("forecast-values-grid", "getRowStyle"),
+        Input("forecast-values-grid", "cellClicked"),
+        Input("forecast-values-grid", "rowData"),
+        prevent_initial_call=True,
+    )
+    def show_forecast_evidence(click, rows):
+        empty = (False, True, None, None, {"styleConditions": []})
+        if "forecast-values-grid.cellClicked" not in ctx.triggered_prop_ids:
+            return empty
+        selected_id = (click or {}).get("rowId")
+        row = next((row for row in rows or [] if row["id"] == selected_id and row["status"] == "Ist"), None)
+        if row is None:
+            return empty
+        return (
+            True, False, html.Div(forecast_evidence_grid(), key=row["id"]),
+            {"year": row["year"], "sv": row["sv"], "row": row},
+            {"styleConditions": [{
+                "condition": f"params.data && params.data.id === '{row['id']}'",
+                "style": {"backgroundColor": "#fff4ce"},
+            }]},
+        )
+
+    @app.callback(
+        Output("forecast-values-dso-grid", "getRowsResponse"),
+        Output("forecast-values-dso-message", "children"),
+        Input("forecast-values-dso-grid", "getRowsRequest"),
+        State("forecast-values-selection", "data"),
+        prevent_initial_call=True,
+    )
+    def load_forecast_evidence_block(request, selection):
+        if not request or not selection:
+            return no_update, no_update
+        row = selection["row"]
+        baseline = row["start"] is None
+        cases = row["total_cases"] if baseline else row["cases"]
+        days = row["total_days"] if baseline else row["days"]
+        empty = {"rowData": [], "rowCount": 0}
+        try:
+            raw = load_forecast_actual_records(
+                row["start"], row["end"], selection["year"], selection["sv"], cases, days,
+            )
+            visible = raw
+            for column, model in (request.get("filterModel") or {}).items():
+                if column not in RAW_BESTAND_COLUMNS:
+                    raise ValueError("Ungültige Filterspalte")
+                values = visible[column]
+                if column in DISPLAY_DATES:
+                    values = values.map(parse_source_date).map(
+                        lambda value: value.strftime("%d.%m.%Y") if value else ""
+                    )
+                visible = visible.loc[text_filter_mask(values, model)]
+            batch = visible.iloc[request["startRow"]:request["endRow"]]
+            records = format_forecast_raw_records(batch)
+        except ValueError as exc:
+            if row.get("archived"):
+                return empty, "Zum gespeicherten Istwert liegt kein passender Nachweis im aktuellen Bestand DSO vor."
+            return empty, str(exc)
+        except Exception:
+            logging.exception("Forecast Istwert records could not be loaded")
+            return empty, "Die Rohdaten konnten nicht geladen werden."
+
+        if baseline:
+            message = f"Anfangsbestand · {cases:,.0f} Fälle · {days:,.0f} Lückentage"
+        else:
+            message = (
+                f"Woche ab {row['week']} · Fälle {row['total_cases'] - cases:,.0f} + {cases:,.0f}"
+                f" = {row['total_cases']:,.0f} · Lückentage {row['total_days'] - days:,.0f} + {days:,.0f}"
+                f" = {row['total_days']:,.0f}"
+            )
+        message = message.replace(",", ".")
+        latest_ipl = parse_source_date(raw["/BIC/YBWRIPL"].dropna().astype(str).max())
+        if latest_ipl:
+            message += f" · Letzter IPL der ausgewählten Zeilen {latest_ipl:%d.%m.%Y}"
+        if row.get("archived"):
+            message += " · Aktueller Bestand DSO mit übereinstimmender Fallzahl und Tagessumme"
+        return {"rowData": records, "rowCount": len(visible)}, message
+
+    @app.callback(
         Output("forecast-severity-content", "children"),
         Input("graph-forecast-container", "children"),
         State("forecast-sachverhalt", "value"),
@@ -517,18 +638,7 @@ def register_callbacks(app):
                 week_id, context["year"], context["sachverhalt"],
                 selected["cases"], selected["days"],
             )
-            # Format date columns for the grid without changing the DuckDB records.
-            import json
-            raw_rows = json.loads(raw.to_json(orient="records", date_format="iso"))
-            for record in raw_rows:
-                for column in ("/BIC/YBWRAVON", "/BIC/YBWRELAD", "/BIC/YBWRABIS", "/BIC/YBWRIPL", MSD_COLUMN):
-                    value = record.get(column)
-                    if value is None:
-                        continue
-                    text = str(value)
-                    compact = text[:10].replace("-", "")
-                    if len(compact) == 8 and compact.isdigit():
-                        record[column] = f"{compact[6:8]}.{compact[4:6]}.{compact[:4]}"
+            raw_rows = format_forecast_raw_records(raw)
             message = (
                 f"Woche ab {selected['week']} · {len(raw_rows)} Fälle · "
                 f"{selected['days']:,.0f} Lückentage. "
@@ -557,6 +667,7 @@ def register_callbacks(app):
         Output("current-forecast-run-id", "data", allow_duplicate=True),
         Output("current-forecast-note", "children"),
         Output("forecast-calculation-message", "children"),
+        Output("forecast-values-grid", "rowData"),
         Input("forecast-calculate-btn", "n_clicks"),
         State("forecast-form-id", "data"),
         State("active-tab-store", "data"),
@@ -569,12 +680,13 @@ def register_callbacks(app):
     )
     def update_forecast_graph(n_clicks, form_id, tab, sachverhalt, year, stichtag, intervallniveau):
         unchanged = (no_update,) * 5
+        unchanged_values = (no_update,)
         if tab != "tab-anchor-forecast" or not n_clicks or not form_id:
-            return (*unchanged, no_update)
+            return (*unchanged, no_update, *unchanged_values)
 
         with forecast_lock:
             if n_clicks <= last_forecast_click.get(form_id, 0):
-                return (*unchanged, no_update)
+                return (*unchanged, no_update, *unchanged_values)
             last_forecast_click[form_id] = n_clicks
             last_forecast_click.move_to_end(form_id)
             if len(last_forecast_click) > 1024:
@@ -589,7 +701,7 @@ def register_callbacks(app):
                     if not 1 <= year <= 9999:
                         raise ValueError
             except (TypeError, ValueError):
-                return (*unchanged, "Bitte gültige Prognoseparameter eingeben.")
+                return (*unchanged, "Bitte gültige Prognoseparameter eingeben.", *unchanged_values)
 
             try:
                 dataset = prepare_anchor_forecast_plot_dataset(sachverhalt, year)
@@ -597,20 +709,23 @@ def register_callbacks(app):
                     sachverhalt, target.isoformat(), intervallniveau, year, dataset=dataset,
                 )
                 if result["forecast"] is None:
-                    return (*unchanged, result["message"])
+                    return (*unchanged, result["message"], *unchanged_values)
                 if target <= result["data_cutoff"]:
                     return (
                         *unchanged,
                         f"Der Stichtag muss nach dem Datenstand ({result['data_cutoff']:%d.%m.%Y}) liegen.",
+                        *unchanged_values,
                     )
 
                 run = ForecastRun.from_result(result, target, year, sachverhalt)
                 graphs = anchor_graph_components(dataset, result, target.isoformat(), year)
-                history = save_forecast_run(run)
+                values = forecast_values_data(dataset, result, target.isoformat(), year, sachverhalt, run.created_at)
+                saved_history = load_forecast_value_history()
+                history = save_forecast_run(run, values)
                 rows, _ = forecast_detail_grid_data(history, run.run_id)
             except Exception:
                 logging.exception("Forecast calculation or persistence failed")
-                return (*unchanged, "Die Prognose konnte nicht berechnet oder gespeichert werden.")
+                return (*unchanged, "Die Prognose konnte nicht berechnet oder gespeichert werden.", *unchanged_values)
 
             return (
                 graphs,
@@ -619,4 +734,7 @@ def register_callbacks(app):
                 run.run_id,
                 CURRENT_RUN_MESSAGE,
                 "",
+                forecast_value_history_rows(
+                    [(run.run_id, run.created_at, values), *saved_history], values, run.run_id,
+                ),
             )

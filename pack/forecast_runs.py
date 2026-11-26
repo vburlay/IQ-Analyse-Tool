@@ -1,6 +1,7 @@
 from dataclasses import dataclass, asdict
 from datetime import date, datetime
 from decimal import Decimal
+import json
 from math import ceil, floor
 from uuid import uuid4
 
@@ -36,7 +37,11 @@ CREATE TABLE IF NOT EXISTS forecast_runs (
     revenue_lower DECIMAL(18,2),
     revenue_upper DECIMAL(18,2),
     is_experimental BOOLEAN NOT NULL
-)
+);
+CREATE TABLE IF NOT EXISTS forecast_run_values (
+    run_id VARCHAR PRIMARY KEY,
+    values_snapshot JSON NOT NULL
+);
 """
 
 # The existing all-years option has no calendar year.
@@ -131,7 +136,7 @@ def ensure_forecast_runs_table():
         connection.execute(SCHEMA)
 
 
-def save_forecast_run(result: ForecastRun):
+def save_forecast_run(result: ForecastRun, values_snapshot=None):
     result.validate()
     values = asdict(result)
     columns = ", ".join(values)
@@ -143,6 +148,11 @@ def save_forecast_run(result: ForecastRun):
                 f"INSERT INTO forecast_runs ({columns}) VALUES ({placeholders})",
                 list(values.values()),
             )
+            if values_snapshot is not None:
+                connection.execute(
+                    "INSERT INTO forecast_run_values (run_id, values_snapshot) VALUES (?, ?)",
+                    [result.run_id, json.dumps(values_snapshot, allow_nan=False)],
+                )
             history = _read_runs(connection)
             connection.commit()
             return history
@@ -169,10 +179,36 @@ def load_latest_forecast_run():
         return next(iter(_read_runs(connection, "LIMIT 1")), None)
 
 
+def load_forecast_value_history():
+    with database_connection(read_only=True) as connection:
+        rows = connection.execute("""
+            SELECT run_id, created_at, values_snapshot FROM forecast_runs
+            JOIN forecast_run_values USING (run_id)
+            WHERE is_experimental
+            ORDER BY created_at DESC, run_id DESC
+        """).fetchall()
+    return [(run_id, created_at, json.loads(snapshot)) for run_id, created_at, snapshot in rows]
+
+
+def load_forecast_values(run_id):
+    with database_connection(read_only=True) as connection:
+        snapshot = connection.execute(
+            "SELECT values_snapshot FROM forecast_run_values WHERE run_id = ?", [run_id]
+        ).fetchone()
+    return json.loads(snapshot[0]) if snapshot else None
+
+
 def clear_forecast_runs(connection=None):
     if connection is None:
         with database_connection() as connection:
-            clear_forecast_runs(connection)
+            connection.begin()
+            try:
+                clear_forecast_runs(connection)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
         return
     connection.execute(SCHEMA)
+    connection.execute("DELETE FROM forecast_run_values")
     connection.execute("DELETE FROM forecast_runs")

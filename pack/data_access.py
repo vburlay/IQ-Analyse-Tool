@@ -318,11 +318,18 @@ def load_anomaly_raw_records(week, anchor_year, sachverhalt, expected_cases, exp
     Exact duplicate snapshots are represented once. Conflicting latest records
     cannot be resolved from the graph context and are reported to the caller.
     """
-    from pack.config import RAW_BESTAND_COLUMNS
-
     week_start = pd.Timestamp(week).normalize()
     if week_start.weekday() != 0:
         raise ValueError("Die ausgewählte Anomalie muss eine Kalenderwoche bezeichnen.")
+    return load_forecast_actual_records(
+        week_start, week_start + pd.Timedelta(days=7), anchor_year, sachverhalt,
+        expected_cases, expected_days,
+    )
+
+
+def load_forecast_actual_records(start, end, anchor_year, sachverhalt, expected_cases, expected_days):
+    from pack.config import RAW_BESTAND_COLUMNS
+
     params = []
     filters = []
     if sachverhalt != "all":
@@ -352,10 +359,12 @@ def load_anomaly_raw_records(week, anchor_year, sachverhalt, expected_cases, exp
         source[column] = values.mask(values.str.strip().eq("").fillna(False))
     group_keys = [keys[0], "_anchor", *CASE_EXTRA_KEY_COLUMNS]
     load_counts = source.groupby(group_keys, dropna=False)["_load"].transform("nunique")
-    in_week = source["_load"].ge(week_start) & source["_load"].lt(week_start + pd.Timedelta(days=7))
-    if (load_counts[in_week] > 1).any():
+    in_period = source["_load"].lt(pd.Timestamp(end))
+    if start is not None:
+        in_period &= source["_load"].ge(pd.Timestamp(start))
+    if (load_counts[in_period] > 1).any():
         raise ValueError("Erstes Ladedatum ist je Fallschlüssel nicht eindeutig. Eine genaue Zuordnung ist nicht möglich.")
-    cohort = source.loc[in_week].copy()
+    cohort = source.loc[in_period].copy()
     latest = cohort.groupby(group_keys, dropna=False)["_ipl"].transform("max")
     cohort = cohort.loc[cohort["_ipl"].eq(latest)]
     result = cohort.loc[:, list(RAW_BESTAND_COLUMNS)].drop_duplicates()
@@ -367,7 +376,7 @@ def load_anomaly_raw_records(week, anchor_year, sachverhalt, expected_cases, exp
     days = pd.to_numeric(result["/BIC/YBWRFTAGE"], errors="raise").sum()
     if len(result) != int(expected_cases) or abs(float(days) - float(expected_days)) > 0.001:
         raise ValueError(
-            "Rohdaten und ausgewählte Anomalie stimmen nicht überein. "
+            "Rohdaten und ausgewählter Istwert stimmen nicht überein. "
             "Bitte die Prognose mit dem aktuellen Datenstand erneut berechnen."
         )
     return result

@@ -1,5 +1,5 @@
 import unittest
-from datetime import date
+from datetime import date, datetime
 
 from pack.config import ANALYSIS_START_YEAR
 from pack.forecast_runs import ForecastRun
@@ -18,7 +18,9 @@ from pack.services.forecast_service import (
     prepare_anchor_forecast_plot_dataset,
 )
 from pack.ui.forecast import (
+    build_anchor_forecast_figures,
     forecast_detail_grid_data,
+    forecast_values_data,
     prepare_anchor_forecast_display_data,
 )
 
@@ -31,6 +33,37 @@ class AnchorForecastTests(unittest.TestCase):
     @staticmethod
     def _parse_number(value: str) -> int:
         return int(value.replace(" €", "").replace(".", ""))
+
+    def test_values_keep_the_baseline_and_one_row_per_future_point(self):
+        dataset = pd.DataFrame({
+            "IPL_dt": pd.to_datetime(["2024-12-30", "2025-01-06"]),
+            "FAELLE": [3, 2], "TAGEN": [30, 20],
+            "Kumulierte_Faelle": [3, 5], "Kumulierte_Lueckentage": [30, 50],
+        })
+        dates = pd.to_datetime(["2025-01-06", "2025-01-13", "2025-01-16"])
+        result = {
+            "forecast": 64,
+            "case_future": pd.DataFrame({"date": dates, "forecast": [5, 6, 6.5],
+                                         "lower": [5, 5, 6], "upper": [5, 7, 7]}),
+            "future": pd.DataFrame({"date": dates, "forecast": [50, 60, 64],
+                                    "lower": [50, 55, 59], "upper": [50, 65, 69]}),
+        }
+        data = forecast_values_data(dataset, result, "2025-01-16", 2025, "04c", datetime(2025, 1, 8, 9))
+        baseline, actual_row, weekly_forecast, partial_forecast = data["rows"]
+        self.assertEqual((baseline["week"], baseline["end"], baseline["total_cases"]),
+                         ("Anfangsbestand", "2025-01-06", 3))
+        self.assertEqual((actual_row["cases"], actual_row["days"], actual_row["total_days"]), (2, 20, 50))
+        self.assertEqual((weekly_forecast["cases"], partial_forecast["cases"]), (1, 0.5))
+        self.assertEqual((partial_forecast["week"], partial_forecast["target"], partial_forecast["calculated"]),
+                         ("13.01.2025", "16.01.2025", "08.01.2025 09:00:00"))
+        figures = build_anchor_forecast_figures(dataset, result, "2025-01-16", 2025)
+        for figure, field in zip(figures, ("total_cases", "total_days")):
+            actual = next(trace for trace in figure.data if trace.name == "Ist-Wert")
+            forecast = next(trace for trace in figure.data if trace.name == "Prognose")
+            self.assertEqual(list(actual.y), [baseline[field], actual_row[field]])
+            self.assertEqual(list(forecast.y[1:]), [weekly_forecast[field], partial_forecast[field]])
+            self.assertEqual(pd.to_datetime(forecast.x[-1]).strftime("%d.%m.%Y"), partial_forecast["target"])
+            self.assertEqual(forecast.marker.size[0], 0)
 
     def test_selected_year_uses_anchor_overlap_and_unique_cases(self):
         selected_year = 2025

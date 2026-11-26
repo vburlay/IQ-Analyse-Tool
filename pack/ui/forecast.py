@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Optional
 from uuid import uuid4
 
@@ -5,8 +6,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from dash import html, dcc
 
-from pack.forecast_runs import ALL_ANCHOR_YEARS, load_forecast_runs
-from pack.config import ANALYSIS_START_YEAR
+from pack.forecast_runs import ALL_ANCHOR_YEARS, load_forecast_runs, load_forecast_value_history
+from pack.config import ANALYSIS_START_YEAR, RAW_BESTAND_DISPLAY_COLUMNS
 from pack.ui.styles import *
 from pack.ui.components import (
     section_title,
@@ -127,19 +128,14 @@ def prepare_anchor_forecast_display_data(
         (data["IPL_dt"] >= start_date) & (data["IPL_dt"] <= target_date)
     ].copy()
 
-    if selected_year not in (None, "all") and not (visible["IPL_dt"] == start_date).any():
-        earlier = data[data["IPL_dt"] < start_date]
-        baseline_cases = (
-            float(earlier["Kumulierte_Faelle"].iloc[-1]) if not earlier.empty else 0.0
-        )
-        baseline_days = (
-            float(earlier["Kumulierte_Lueckentage"].iloc[-1]) if not earlier.empty else 0.0
-        )
+    earlier = data.loc[data["IPL_dt"] < start_date]
+    if start_date <= target_date and not earlier.empty:
+        last_earlier = earlier.iloc[-1]
         baseline = pd.DataFrame(
             {
                 "IPL_dt": [start_date],
-                "Kumulierte_Faelle": [baseline_cases],
-                "Kumulierte_Lueckentage": [baseline_days],
+                "Kumulierte_Faelle": [last_earlier["Kumulierte_Faelle"]],
+                "Kumulierte_Lueckentage": [last_earlier["Kumulierte_Lueckentage"]],
             }
         )
         visible = pd.concat([baseline, visible], ignore_index=True, sort=False)
@@ -163,12 +159,26 @@ def build_anchor_forecast_figures(
     )
     cases_fig = go.Figure()
     days_fig = go.Figure()
+    last_actual_week = full_data["IPL_dt"].max()
+
+    def forecast_trace(points):
+        is_forecast = points["date"].gt(last_actual_week)
+        return go.Scatter(
+            x=points["date"], y=points["forecast"],
+            mode="lines+markers", name="Prognose",
+            line=dict(width=3, color="#f28e2b"),
+            marker=dict(size=[6 if is_future else 0 for is_future in is_forecast]),
+            hoverinfo=["x+y+name" if is_future else "skip" for is_future in is_forecast],
+            xhoverformat="%d.%m.%Y", yhoverformat=".0f", legendrank=2,
+        )
 
     cases_fig.add_trace(
         go.Scatter(
             x=data["IPL_dt"], y=data["Kumulierte_Faelle"],
             mode="lines+markers", name="Ist-Wert",
             line=dict(width=3, color="#0b6fb3"), marker=dict(size=5),
+            hovertemplate="%{x|%d.%m.%Y}<br>Ist-Wert: %{y:.0f} Fälle<extra></extra>",
+            zorder=2,
             legendrank=1,
         )
     )
@@ -177,6 +187,8 @@ def build_anchor_forecast_figures(
             x=data["IPL_dt"], y=data["Kumulierte_Lueckentage"],
             mode="lines+markers", name="Ist-Wert",
             line=dict(width=3, color="#0b6fb3"), marker=dict(size=5),
+            hovertemplate="%{x|%d.%m.%Y}<br>Ist-Wert: %{y:.0f} Lückentage<extra></extra>",
+            zorder=2,
             legendrank=1,
         )
     )
@@ -199,19 +211,13 @@ def build_anchor_forecast_figures(
                 go.Scatter(
                     x=case_future["date"], y=case_future["lower"], mode="lines",
                     line=dict(width=0), fill="tonexty",
+                    hoverinfo="skip",
                     fillcolor="rgba(242, 142, 43, 0.18)",
                     name=f"{interval_level}-%-Prognoseintervall",
                     legendrank=3,
                 )
             )
-            cases_fig.add_trace(
-                go.Scatter(
-                    x=case_future["date"], y=case_future["forecast"],
-                    mode="lines+markers", name="Prognose",
-                    line=dict(width=3, color="#f28e2b"), marker=dict(size=6),
-                    legendrank=2,
-                )
-            )
+            cases_fig.add_trace(forecast_trace(case_future))
 
         future = forecast_result.get("future", pd.DataFrame())
         if not future.empty:
@@ -228,19 +234,13 @@ def build_anchor_forecast_figures(
                 go.Scatter(
                     x=future["date"], y=future["lower"], mode="lines",
                     line=dict(width=0), fill="tonexty",
+                    hoverinfo="skip",
                     fillcolor="rgba(242, 142, 43, 0.18)",
                     name=f"{interval_level}-%-Prognoseintervall",
                     legendrank=3,
                 )
             )
-            days_fig.add_trace(
-                go.Scatter(
-                    x=future["date"], y=future["forecast"],
-                    mode="lines+markers", name="Prognose",
-                    line=dict(width=3, color="#f28e2b"), marker=dict(size=6),
-                    legendrank=2,
-                )
-            )
+            days_fig.add_trace(forecast_trace(future))
 
     x_end = target_date
     figures = (
@@ -313,6 +313,141 @@ def anchor_graph_components(df_filtered, forecast_result, stichtag, selected_yea
     ]
 
 
+def forecast_values_data(dataset, result, target, year, sachverhalt, calculated_at):
+    rows = []
+    context = {"year": year, "sv": sachverhalt, "rows": rows}
+    if dataset.empty:
+        return context
+    visible, start, end = prepare_anchor_forecast_display_data(dataset, year, target)
+    for point in visible.to_dict("records"):
+        day = point["IPL_dt"]
+        if pd.isna(point["FAELLE"]):
+            first_visible_week = start + pd.Timedelta(days=(-start.weekday()) % 7)
+            rows.append({
+                "id": "baseline", "week": "Anfangsbestand", "status": "Ist", "calculated": "—",
+                "cases": None, "days": None, "total_cases": float(point["Kumulierte_Faelle"]),
+                "total_days": float(point["Kumulierte_Lueckentage"]),
+                "start": None, "end": first_visible_week.date().isoformat(), "target": day.strftime("%d.%m.%Y"),
+            })
+            continue
+        rows.append({
+            "id": f"ist-{day.date()}", "week": day.strftime("%d.%m.%Y"),
+            "status": "Ist", "calculated": "—", "cases": float(point["FAELLE"]),
+            "days": float(point["TAGEN"]), "total_cases": float(point["Kumulierte_Faelle"]),
+            "total_days": float(point["Kumulierte_Lueckentage"]),
+            "start": day.date().isoformat(), "end": (day + pd.Timedelta(days=7)).date().isoformat(),
+            "target": day.strftime("%d.%m.%Y"),
+        })
+    if not result or result.get("forecast") is None:
+        return context
+    cases = result.get("case_future", pd.DataFrame())
+    days = result.get("future", pd.DataFrame())
+    if cases.empty or days.empty:
+        return context
+    future = cases[["date", "forecast"]].merge(days[["date", "forecast"]], on="date", suffixes=("_cases", "_days"))
+    future = future.sort_values("date")
+    future[["cases", "days"]] = future[["forecast_cases", "forecast_days"]].diff()
+    for point in future.dropna(subset=["cases", "days"]).itertuples(index=False):
+        if not start <= point.date <= end:
+            continue
+        week = point.date.to_period("W-SUN").start_time
+        rows.append({
+            "id": f"prognose-{point.date.date()}", "week": week.strftime("%d.%m.%Y"),
+            "status": "Prognose", "calculated": calculated_at.strftime("%d.%m.%Y %H:%M:%S"),
+            "cases": point.cases, "days": point.days, "total_cases": point.forecast_cases,
+            "total_days": point.forecast_days, "target": point.date.strftime("%d.%m.%Y"),
+        })
+    return context
+
+
+def forecast_value_history_rows(history, current, current_run_id=None):
+    if not history:
+        return [{**row, "year": str(current["year"]), "sv": current["sv"]} for row in current["rows"]]
+    return [
+        {
+            **row,
+            "id": row["id"] if run_id == current_run_id else f"{run_id}:{row['id']}",
+            "year": str(snapshot["year"]),
+            "sv": snapshot["sv"],
+            "calculated": created_at.strftime("%d.%m.%Y %H:%M:%S"),
+            "archived": run_id != current_run_id,
+        }
+        for run_id, created_at, snapshot in history
+        for row in snapshot["rows"]
+    ]
+
+
+def forecast_evidence_grid():
+    raw_grid = make_grid("forecast-values-dso-grid", [], [
+        {"headerName": field, "field": field, "minWidth": 190,
+         "headerClass": "header-faelle-sub",
+         "cellDataType": False, "filter": "agTextColumnFilter", "floatingFilter": True, "sortable": False,
+         "filterParams": {"debounceMs": 350}}
+        for field in RAW_BESTAND_DISPLAY_COLUMNS
+    ])
+    del raw_grid.rowData
+    raw_grid.rowModelType = "infinite"
+    raw_grid.dashGridOptions.update(
+        pagination=True, paginationPageSize=25, paginationPageSizeSelector=[25, 50, 100],
+        cacheBlockSize=100, maxBlocksInCache=4, maxConcurrentDatasourceRequests=1,
+    )
+    return raw_grid
+
+
+def forecast_values_panel(data, saved_history):
+    identity_columns = [
+        {"headerName": label, "field": field, "minWidth": width, "headerClass": "header-datenstand",
+         **({"comparator": {"function": "compareForecastDates"}} if field in ("week", "calculated") else {}),
+         **({"tooltipField": "target", "sort": "asc"} if field == "week" else {})}
+        for field, label, width in (
+            ("week", "Woche", 150), ("calculated", "Berechnet am", 170), ("status", "Status", 100),
+            ("year", "Ankerjahr", 110), ("sv", "Sachverhalt", 125),
+        )
+    ]
+    column_defs = [
+        *identity_columns,
+        *[
+            {
+                "headerName": group, "headerClass": header_class,
+                "children": [
+                    {"headerName": label, "field": field, "minWidth": 145, "flex": 1,
+                     "wrapHeaderText": True, "autoHeaderHeight": True,
+                     "headerClass": f"{header_class}-sub", "type": "numericColumn",
+                     "valueFormatter": {"function":
+                         "params.value == null ? '—' : params.value.toLocaleString("
+                         "'de-DE', {maximumFractionDigits: 0})"}}
+                    for label, field in ((f"Neue {unit}", weekly), (f"{unit} insgesamt", total))
+                ],
+            }
+            for group, unit, header_class, weekly, total in (
+                ("Fälle", "Fälle", "header-faelle", "cases", "total_cases"),
+                ("Lückentage", "Tage", "header-lueckentage", "days", "total_days"),
+            )
+        ],
+    ]
+    values_grid = make_grid(
+        "forecast-values-grid", forecast_value_history_rows(saved_history, data), column_defs,
+        get_row_id="params.data.id",
+        row_class_rules={"forecast-current-run": "params.data && params.data.archived === false && params.data.status === 'Prognose'"},
+    )
+    values_grid.dashGridOptions.update(paginationPageSize=25, paginationPageSizeSelector=[10, 25, 50, 100])
+    return html.Div([
+        html.P(
+            "Prognosewerte werden auf ganze Fälle und Tage gerundet angezeigt.",
+            style={"fontSize": "13px", "color": TEXT_MUTED, "margin": "0 0 10px"},
+        ),
+        html.Div(values_grid, style=CHART_CARD_STYLE),
+        dcc.Store(id="forecast-values-selection"),
+        html.Details([
+            html.Summary("Bestand DSO"),
+            html.Div([
+                html.Div(id="forecast-values-dso-message", role="status"),
+                html.Div(id="forecast-values-dso-anchor"),
+            ], id="forecast-values-dso-content", hidden=True, style=CHART_CARD_STYLE),
+        ], id="forecast-values-dso-details", open=False, className="monitoring-bestand-dso"),
+    ], id="forecast-values-panel", style={**SECTION_STYLE, "display": "none"})
+
+
 def render_forecast_tab():
     default_sachverhalt = "000"
     default_year = pd.Timestamp.today().year
@@ -328,10 +463,11 @@ def render_forecast_tab():
         str(stichtag_default),
         80,
         default_year,
+        dataset=df_init,
     )
     detail_rows, detail_cols = forecast_detail_grid_data(load_forecast_runs())
 
-    return html.Div(
+    page = html.Div(
         [
             dcc.Store(id="forecast-form-id", data=str(uuid4())),
             html.Div(
@@ -497,3 +633,16 @@ def render_forecast_tab():
         ],
         style=PAGE_STYLE,
     )
+    values = forecast_values_data(
+        df_init, initial_result, str(stichtag_default), default_year, default_sachverhalt, datetime.now(),
+    )
+    tab_style = {"borderRadius": "10px 10px 0 0"}
+    page.children[-3:] = [
+        dcc.Tabs(id="forecast-view", value="graphs", children=[
+            dcc.Tab(label="Grafiken", value="graphs", style=tab_style, selected_style=tab_style),
+            dcc.Tab(label="Werte & Nachweis", value="values", style=tab_style, selected_style=tab_style),
+        ], style=SECTION_STYLE),
+        html.Div(page.children[-3:], id="forecast-graphs-panel"),
+        forecast_values_panel(values, load_forecast_value_history()),
+    ]
+    return page

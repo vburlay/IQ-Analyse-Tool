@@ -17,6 +17,8 @@ from pack.forecast_runs import (
     clear_forecast_runs,
     ensure_forecast_runs_table,
     load_forecast_runs,
+    load_forecast_value_history,
+    load_forecast_values,
     load_latest_forecast_run,
     save_forecast_run,
 )
@@ -24,7 +26,7 @@ from pack.hana_import import HanaImportError, clear_local_database, ensure_local
 from pack.services.forecast_service import calculate_stichtag_forecast
 from pack.services.quality_service import load_quality_report
 from pack.ui.callbacks import register_callbacks
-from pack.ui.forecast import CURRENT_RUN_MESSAGE, forecast_detail_grid_data, render_forecast_tab
+from pack.ui.forecast import CURRENT_RUN_MESSAGE, forecast_detail_grid_data, forecast_values_panel, render_forecast_tab
 
 
 class ForecastRunsTests(unittest.TestCase):
@@ -103,12 +105,40 @@ class ForecastRunsTests(unittest.TestCase):
         run = self.make_run()
         with patch("pack.forecast_runs._read_runs", side_effect=RuntimeError("read failed")):
             with self.assertRaisesRegex(RuntimeError, "read failed"):
-                save_forecast_run(run)
+                save_forecast_run(run, {"rows": [{"status": "Prognose"}]})
         self.assertEqual(load_forecast_runs(), [])
+        self.assertIsNone(load_forecast_values(run.run_id))
+
+    def test_values_archive_reopens_the_saved_weekly_points(self):
+        legacy, run = self.make_run(), self.make_run()
+        snapshot = {"year": 2025, "sv": "000", "rows": [
+            {"id": "ist-2025-10-03", "status": "Ist", "total_cases": 10},
+            {"id": "prognose-2025-10-10", "status": "Prognose", "total_cases": 12.7},
+        ]}
+        save_forecast_run(legacy)
+        save_forecast_run(run, snapshot)
+        self.assertEqual(load_forecast_value_history(), [(run.run_id, run.created_at, snapshot)])
+        self.assertEqual(load_forecast_values(run.run_id), snapshot)
+        self.assertIsNone(load_forecast_values(legacy.run_id))
+
+        later = replace(self.make_run(), created_at=run.created_at.replace(year=run.created_at.year + 1))
+        save_forecast_run(later, snapshot)
+        panel = forecast_values_panel({"year": 2026, "sv": "004", "rows": []}, load_forecast_value_history())
+        grid = next(child.children for child in panel.children
+                    if getattr(getattr(child, "children", None), "id", None) == "forecast-values-grid")
+        self.assertEqual([row["status"] for row in grid.rowData], ["Ist", "Prognose", "Ist", "Prognose"])
+        self.assertTrue(grid.rowData[0]["id"].startswith(later.run_id))
+        self.assertEqual(len({row["id"] for row in grid.rowData}), 4)
+        self.assertEqual(grid.rowData[-1]["id"], f"{run.run_id}:prognose-2025-10-10")
+        self.assertEqual(grid.rowData[-1]["total_cases"], 12.7)
+
+        clear_forecast_runs()
+        self.assertIsNone(load_forecast_values(run.run_id))
 
     def test_refresh_preserves_history_and_clear_preserves_schema(self):
         run = self.make_run()
-        save_forecast_run(run)
+        snapshot = {"year": 2025, "sv": "000", "rows": []}
+        save_forecast_run(run, snapshot)
         frame = pd.DataFrame({column: ["x"] for column in RAW_BESTAND_COLUMNS})
         frame["/BIC/YBWRAVON"] = "20250101"
         frame["/BIC/YBWRABIS"] = "20251231"
@@ -132,10 +162,12 @@ class ForecastRunsTests(unittest.TestCase):
         hana_check = next(check for check in report.checks if check["id"] == "hana_reconciliation")
         self.assertEqual(hana_check["Status"], "Bestätigt")
         self.assertEqual(load_forecast_runs(), [run])
+        self.assertEqual(load_forecast_values(run.run_id), snapshot)
         forecast = calculate_stichtag_forecast("000", "2025-11-01", 90, 2025)
         self.assertEqual(forecast["data_cutoff"], date(2025, 10, 3))
         self.assertEqual(forecast["calculation_date"].date(), date(2025, 9, 29))
         clear_local_database()
+        self.assertIsNone(load_forecast_values(run.run_id))
         report = load_quality_report()
         hana_check = next(check for check in report.checks if check["id"] == "hana_reconciliation")
         self.assertEqual(hana_check["Status"], "Nicht geprüft")
