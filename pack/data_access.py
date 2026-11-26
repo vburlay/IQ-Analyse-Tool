@@ -22,9 +22,12 @@ from pack.config import (
 DATABASE_LOCK = RLock()
 CASE_EXTRA_KEY_SQL = ", ".join(f'"{column}"' for column in CASE_EXTRA_KEY_COLUMNS)
 CASE_EXTRA_KEY_SELECT = ", ".join(
-    f'''CASE WHEN TRIM("{column}") = '' THEN NULL ELSE "{column}" END AS "{column}"'''
+    f'''CASE WHEN TRIM(CAST("{column}" AS VARCHAR)) = ''
+         THEN NULL ELSE CAST("{column}" AS VARCHAR) END AS "{column}"'''
     for column in CASE_EXTRA_KEY_COLUMNS
 )
+ANCHOR_YEAR_OVERLAP_SQL = '''CAST("/BIC/YBWRAVON" AS DATE) <= CAST(? AS DATE)
+                             AND CAST("/BIC/YBWRABIS" AS DATE) >= CAST(? AS DATE)'''
 
 
 @contextmanager
@@ -80,6 +83,36 @@ def load_raw_weekly_data(sachverhalt: str = "all") -> pd.DataFrame:
     out["TAGEN"] = pd.to_numeric(out["TAGEN"], errors="coerce").fillna(0)
     out["IPL_dt"] = pd.to_datetime(out["IPL"], errors="coerce")
     return out
+
+
+def load_anchor_monitoring_cases(year: int, *, raw: bool = False) -> pd.DataFrame:
+    """Select a single source version for each case overlapping the anchor year."""
+    source_fields = f"* EXCLUDE ({CASE_EXTRA_KEY_SQL})," if raw else ""
+    return duck_query_df(
+        f'''
+        WITH eligible AS (
+            SELECT
+                {source_fields}
+                "/B99/S_BWPKKD" AS case_id,
+                CAST("/BIC/YBWRAVON" AS DATE) AS anchor_start,
+                {CASE_EXTRA_KEY_SELECT},
+                CAST("/BIC/YBWRELAD" AS DATE) AS first_load,
+                CAST("/BIC/YBWRIPL" AS VARCHAR) AS ipl,
+                CAST("/BIC/YBWRSV" AS VARCHAR) AS SV,
+                CAST("/BIC/YBWRERGBN" AS VARCHAR) AS Ergebnis,
+                TRY_CAST("/BIC/YBWRFTAGE" AS DOUBLE) AS days
+            FROM {TABLE_RAW}
+            WHERE {ANCHOR_YEAR_OVERLAP_SQL}
+        )
+        SELECT {"*" if raw else "first_load, SV, Ergebnis, days"}
+        FROM eligible
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY case_id, anchor_start, {CASE_EXTRA_KEY_SQL}
+            ORDER BY ipl DESC NULLS LAST, first_load, days, SV, Ergebnis
+        ) = 1
+        ''',
+        [f"{year}-12-31", f"{year}-01-01"],
+    )
 
 
 def load_anchor_cohort_weekly_data(

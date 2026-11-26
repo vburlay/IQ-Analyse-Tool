@@ -1,29 +1,41 @@
 from __future__ import annotations
 
+import json
 import numpy as np
 import pandas as pd
 
-from pack.config import EURO_PER_LUECKENTAG
+from pack.config import CASE_KEY_COLUMNS, EURO_PER_LUECKENTAG, RAW_BESTAND_COLUMNS, TABLE_RAW
 from pack.data_access import (
+    ANCHOR_YEAR_OVERLAP_SQL,
     duck_query_df,
     get_latest_elad_value,
     get_latest_ipl_value,
+    load_anchor_monitoring_cases,
     load_raw_weekly_data,
 )
+from pack.services.quality_service import DISPLAY_DATES, parse_source_date, text_filter_mask
+
+DSO_PAGE_SIZE = 100
+DSO_PAGE_SIZES = (25, 50, 100, 200)
 
 
 def get_monitoring_stand_text(
     last_stand: str | None = None,
     date_basis: str = "elad",
+    *,
+    year: int | None = None,
 ) -> str:
+    if date_basis == "anchor":
+        return f"Stand Ankerjahr: {year if year is not None else pd.Timestamp.today().year}"
     if date_basis == "ipl":
         return f"Stand IPL: {get_latest_ipl_value()}"
     stand = last_stand or get_latest_elad_value()
     return f"Stand erstes Ladedatum: {stand}"
 
 
-def get_monitoring_kpis(year: int | None, date_basis: str = "elad") -> dict[str, str]:
-    rows, _ = get_monitoring_grid_data(year, date_basis)
+def get_monitoring_kpis(year: int | None, date_basis: str = "elad", *, rows=None) -> dict[str, str]:
+    if rows is None:
+        rows, _ = get_monitoring_grid_data(year, date_basis)
     if not rows:
         return {
             "potential": "—",
@@ -53,8 +65,16 @@ def get_monitoring_kpis(year: int | None, date_basis: str = "elad") -> dict[str,
 def get_monitoring_chart_data(
     year: int | None = None,
     date_basis: str = "elad",
+    *,
+    anchor_cases: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     selected_year = int(year) if year is not None else pd.Timestamp.today().year
+    if date_basis == "anchor":
+        cases = load_anchor_monitoring_cases(selected_year) if anchor_cases is None else anchor_cases
+        week = pd.to_datetime(cases["first_load"]).dt.to_period("W-SUN").dt.start_time
+        chart = cases.groupby(week).agg(TAGEN=("days", "sum"), Kalendertage=("first_load", "nunique"))
+        chart["Vollstaendige_Woche"] = chart["Kalendertage"].eq(7)
+        return chart.rename_axis("x").reset_index()
     if date_basis == "ipl":
         df = load_raw_weekly_data("all")
         if df.empty:
@@ -92,32 +112,145 @@ def get_monitoring_chart_data(
     return df
 
 
+RESULT_LABELS = {
+    "001": "offen",
+    "002": "Fami erfasst",
+    "003": "Mitgliedschaft erfasst",
+    "004": "storno",
+    "005": "Meldegründe",
+    "006": "FIM erfasst",
+    "007": "sonstige",
+    "008": "Versichertenart 5XX erfasst",
+}
+RESULT_CODES = {label: code for code, label in RESULT_LABELS.items()}
+ERTRAG_CODES = ("002", "003", "008")
+OTHER_RESULTS = "Sonstige Ergebnisschlüssel"
+
+
+def monitoring_date_filter(year, date_basis):
+    if date_basis == "ipl":
+        return 'SUBSTR(CAST("/BIC/YBWRIPL" AS VARCHAR), 1, 4) = ?', [str(year)]
+    if date_basis == "anchor":
+        return ANCHOR_YEAR_OVERLAP_SQL, [f"{year}-12-31", f"{year}-01-01"]
+    return (
+        '''CAST("/BIC/YBWRELAD" AS DATE) >= CAST(? AS DATE)
+           AND CAST("/BIC/YBWRELAD" AS DATE) < CAST(? AS DATE)''',
+        [f"{year}-01-01", f"{year + 1}-01-01"],
+    )
+
+
+def get_monitoring_source_rows(year, date_basis, sachverhalt, field="SV"):
+    date_filter, params = monitoring_date_filter(year, date_basis)
+    if date_basis == "anchor" and field != "SV":
+        return anchor_dso_cell_rows(year, sachverhalt, field)
+
+    if sachverhalt != "Gesamtergebnis":
+        date_filter += """ AND COALESCE(CAST("/BIC/YBWRSV" AS VARCHAR), '(leer)') = ?"""
+        params.append(sachverhalt)
+    result = 'CAST("/BIC/YBWRERGBN" AS VARCHAR)'
+    if field in RESULT_CODES:
+        date_filter += f" AND {result} = ?"
+        params.append(RESULT_CODES[field])
+    elif field == OTHER_RESULTS:
+        placeholders = ", ".join("?" for _ in RESULT_LABELS)
+        date_filter += f" AND COALESCE({result}, '') NOT IN ({placeholders})"
+        params.extend(RESULT_LABELS)
+    elif field in ("Ertrag", "11 Euro pro Tag"):
+        placeholders = ", ".join("?" for _ in ERTRAG_CODES)
+        date_filter += f" AND {result} IN ({placeholders})"
+        params.extend(ERTRAG_CODES)
+    elif field not in ("SV", "Potential", "Ertragsanteil", "Potential_x_Ertragsanteil",
+                      "Potential_x_Ertragsanteil-Euro"):
+        raise ValueError("Unbekannte Spalte der Kreuztabelle")
+    if field != "SV":
+        placeholders = ", ".join("?" for _ in RESULT_LABELS)
+        date_filter += f' AND "/BIC/YBWRSV" IS NOT NULL AND {result} IN ({placeholders})'
+        params.extend(RESULT_LABELS)
+    columns = ", ".join(f'"{column}"' for column in RAW_BESTAND_COLUMNS)
+    day_projection = ', TRY_CAST("/BIC/YBWRFTAGE" AS BIGINT) AS days' if field != "SV" else ""
+    return duck_query_df(
+        f'SELECT {columns}{day_projection} FROM "{TABLE_RAW}" WHERE {date_filter}',
+        params,
+    )
+
+
+def anchor_dso_cell_rows(year, sachverhalt, field):
+    # Select the latest version first, just as in the pivot, before filtering the cell.
+    cases = load_anchor_monitoring_cases(year, raw=True)
+    if sachverhalt != "Gesamtergebnis":
+        cases = cases.loc[cases["SV"].fillna("(leer)").eq(sachverhalt)]
+    if field in RESULT_CODES:
+        return cases.loc[cases["Ergebnis"].eq(RESULT_CODES[field])]
+    if field == OTHER_RESULTS:
+        return cases.loc[~cases["Ergebnis"].isin(RESULT_LABELS)]
+    if field in ("Ertrag", "11 Euro pro Tag"):
+        return cases.loc[cases["Ergebnis"].isin(ERTRAG_CODES)]
+    if field in ("Potential", "Ertragsanteil", "Potential_x_Ertragsanteil",
+                 "Potential_x_Ertragsanteil-Euro"):
+        return cases
+    raise ValueError("Unbekannte Spalte der Kreuztabelle")
+
+
+def get_monitoring_dso_page(year, date_basis, sachverhalt, page, filters=None, *,
+                            page_size=DSO_PAGE_SIZE, field="SV"):
+    source = get_monitoring_source_rows(year, date_basis, sachverhalt, field)
+    total_days = (
+        pd.to_numeric(source["/BIC/YBWRFTAGE"], errors="coerce").sum()
+        if field == "SV" else round(source["days"].sum())
+    )
+
+    def date_label(value):
+        parsed = parse_source_date(value)
+        return parsed.strftime("%d.%m.%Y") if parsed else value
+
+    visible = source
+    for column, model in (filters or {}).items():
+        if column not in RAW_BESTAND_COLUMNS:
+            raise ValueError("Ungültige Filterspalte")
+        values = visible[column]
+        if column in DISPLAY_DATES:
+            values = values.map(date_label)
+        visible = visible.loc[text_filter_mask(values, model)]
+    pages = max(1, (len(visible) + page_size - 1) // page_size)
+    page = pages - 1 if page is None else min(max(page, 0), pages - 1)
+    visible = visible.sort_values([*CASE_KEY_COLUMNS, "/BIC/YBWRIPL"], kind="stable")
+    batch = visible.iloc[page * page_size:(page + 1) * page_size][list(RAW_BESTAND_COLUMNS)].copy()
+    for column in DISPLAY_DATES:
+        batch[column] = batch[column].map(date_label)
+    records = json.loads(batch.to_json(orient="records", date_format="iso"))
+    return records, total_days, page, pages, len(visible), len(source)
+
+
 def get_monitoring_grid_data(
     year: int | None,
     date_basis: str = "elad",
+    *,
+    anchor_cases: pd.DataFrame | None = None,
 ) -> tuple[list[dict], list[dict]]:
     selected_year = int(year) if year is not None else pd.Timestamp.today().year
-    start_date = f"{selected_year}-01-01"
-    end_date = f"{selected_year + 1}-01-01"
-    if date_basis == "ipl":
-        date_filter = 'SUBSTR(CAST("/BIC/YBWRIPL" AS VARCHAR), 1, 4) = ?'
-        date_params = [str(selected_year)]
+    date_filter, date_params = monitoring_date_filter(selected_year, date_basis)
+    if date_basis == "anchor":
+        cases = load_anchor_monitoring_cases(selected_year) if anchor_cases is None else anchor_cases
+        aggregated = cases.groupby(["SV", "Ergebnis"], as_index=False, dropna=False).agg(Lueckentage=("days", "sum"))
     else:
-        date_filter = '''
-            CAST("/BIC/YBWRELAD" AS DATE) >= CAST(? AS DATE)
-            AND CAST("/BIC/YBWRELAD" AS DATE) < CAST(? AS DATE)
-        '''
-        date_params = [start_date, end_date]
-    ergebnis_map = {
-        "001": "offen",
-        "002": "Fami erfasst",
-        "003": "Mitgliedschaft erfasst",
-        "004": "storno",
-        "005": "Meldegründe",
-        "006": "FIM erfasst",
-        "007": "sonstige",
-        "008": "Versichertenart 5XX erfasst",
-    }
+        aggregated = duck_query_df(
+            f'''
+            SELECT
+                CAST("/BIC/YBWRSV" AS VARCHAR) AS SV,
+                CAST("/BIC/YBWRERGBN" AS VARCHAR) AS Ergebnis,
+                SUM(TRY_CAST("/BIC/YBWRFTAGE" AS BIGINT)) AS Lueckentage
+            FROM raw_bestand
+            WHERE {date_filter}
+            GROUP BY 1, 2
+            ORDER BY 1, 2
+            ''',
+            date_params,
+        )
+
+    return monitoring_pivot(aggregated, date_basis)
+
+
+def monitoring_pivot(aggregated, date_basis):
     category_columns = [
         "FIM erfasst",
         "Fami erfasst",
@@ -129,25 +262,17 @@ def get_monitoring_grid_data(
         "storno",
     ]
 
-    aggregated = duck_query_df(
-        f'''
-        SELECT
-            CAST("/BIC/YBWRSV" AS VARCHAR) AS SV,
-            CAST("/BIC/YBWRERGBN" AS VARCHAR) AS Ergebnis,
-            SUM(TRY_CAST("/BIC/YBWRFTAGE" AS BIGINT)) AS Lueckentage
-        FROM raw_bestand
-        WHERE {date_filter}
-        GROUP BY 1, 2
-        ORDER BY 1, 2
-        ''',
-        date_params,
-    )
-
     if aggregated.empty:
         return [], []
 
-    aggregated["Ergebnisschlüssel"] = aggregated["Ergebnis"].map(ergebnis_map)
-    aggregated = aggregated.dropna(subset=["Ergebnisschlüssel"])
+    aggregated["Ergebnisschlüssel"] = aggregated["Ergebnis"].map(RESULT_LABELS)
+    if date_basis == "anchor":
+        aggregated["SV"] = aggregated["SV"].fillna("(leer)")
+        if aggregated["Ergebnisschlüssel"].isna().any():
+            category_columns.append(OTHER_RESULTS)
+            aggregated["Ergebnisschlüssel"] = aggregated["Ergebnisschlüssel"].fillna(OTHER_RESULTS)
+    else:
+        aggregated = aggregated.dropna(subset=["Ergebnisschlüssel"])
     pivot = aggregated.pivot_table(
         index="SV",
         columns="Ergebnisschlüssel",
@@ -159,7 +284,7 @@ def get_monitoring_grid_data(
     pivot.loc["Gesamtergebnis"] = pivot.sum(axis=0)
     pivot["Potential"] = pivot[category_columns].sum(axis=1)
     pivot["Ertrag"] = pivot[
-        ["Versichertenart 5XX erfasst", "Mitgliedschaft erfasst", "Fami erfasst"]
+        [RESULT_LABELS[code] for code in ERTRAG_CODES]
     ].sum(axis=1)
     pivot["Ertragsanteil"] = (
         pivot["Ertrag"].div(pivot["Potential"].replace(0, np.nan)).mul(100).fillna(0).round(0)

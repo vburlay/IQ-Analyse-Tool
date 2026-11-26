@@ -348,15 +348,69 @@
     margin: 0 0 12px;
 }
 
-.severity-panel > details {
+.severity-panel > details,
+.monitoring-bestand-dso {
     font-size: 13px;
     line-height: 1.6;
     color: #526d7c;
 }
 
-.severity-panel > details > summary {
+.severity-panel > details > summary,
+.monitoring-bestand-dso > summary {
     cursor: pointer;
     padding: 8px 0;
+}
+
+.monitoring-bestand-dso {
+    font-family: Georgia, "Times New Roman", serif;
+    margin-top: 12px;
+}
+
+.monitoring-dso-grid .ag-root-wrapper {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.monitoring-dso-footer,
+.monitoring-dso-pager {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.monitoring-dso-footer {
+    justify-content: space-between;
+    padding: 6px 10px;
+    border: 1px solid #d9d9d9;
+    border-top: 0;
+    border-radius: 0 0 8px 8px;
+    background: #fff;
+    color: #181d1f;
+    font-family: Arial, sans-serif;
+}
+
+.monitoring-dso-total {
+    font-weight: 700;
+}
+
+.monitoring-dso-pager button {
+    min-width: 28px;
+    min-height: 28px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+.monitoring-dso-pager button:enabled:hover {
+    background: #edf2f6;
+}
+
+.monitoring-dso-pager button:disabled {
+    cursor: default;
+    opacity: 0.45;
 }
 
 @media (max-width: 650px) {

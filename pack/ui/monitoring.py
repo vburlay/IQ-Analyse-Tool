@@ -1,10 +1,11 @@
 from datetime import date
 
 import pandas as pd
+import dash_ag_grid as dag
 import plotly.graph_objects as go
 from dash import html, dcc
 
-from pack.config import ANALYSIS_START_YEAR
+from pack.config import ANALYSIS_START_YEAR, RAW_BESTAND_DISPLAY_COLUMNS
 from pack.ui.styles import *
 from pack.ui.components import (
     kpi_card,
@@ -12,6 +13,8 @@ from pack.ui.components import (
 )
 
 from pack.services.monitoring_service import (
+    DSO_PAGE_SIZE,
+    DSO_PAGE_SIZES,
     get_monitoring_kpis,
     get_monitoring_stand_text,
     get_monitoring_grid_data,
@@ -22,8 +25,10 @@ from pack.services.monitoring_service import (
 def build_monitoring_main_fig(
     year: int | None = None,
     date_basis: str = "elad",
+    *,
+    anchor_cases: pd.DataFrame | None = None,
 ):
-    plot_df = get_monitoring_chart_data(year=year, date_basis=date_basis)
+    plot_df = get_monitoring_chart_data(year=year, date_basis=date_basis, anchor_cases=anchor_cases)
 
     fig = go.Figure()
     if plot_df.empty:
@@ -43,10 +48,11 @@ def build_monitoring_main_fig(
         )
         week_start = pd.Series(plot_df.index, index=plot_df.index)
         selected_year = int(year) if year is not None else date.today().year
-        period_start = week_start.clip(lower=pd.Timestamp(selected_year, 1, 1))
-        period_end = (week_start + pd.Timedelta(days=6)).clip(
-            upper=pd.Timestamp(selected_year, 12, 31)
-        )
+        period_start = week_start
+        period_end = week_start + pd.Timedelta(days=6)
+        if date_basis == "elad":
+            period_start = period_start.clip(lower=pd.Timestamp(selected_year, 1, 1))
+            period_end = period_end.clip(upper=pd.Timestamp(selected_year, 12, 31))
         fig.add_scatter(
             x=week_start + pd.Timedelta(days=3), y=plot_df["TAGEN"],
             mode="lines+markers", connectgaps=False,
@@ -105,13 +111,34 @@ def build_monitoring_main_fig(
     return fig
 
 
+def monitoring_chart_labels(year, date_basis):
+    if date_basis == "ipl":
+        return (
+            "Aktuelle Entwicklung der Lückentage je IPL",
+            "Periodenwert je IPL (nicht kumuliert). Der Wert kann zwischen zwei IPL-Terminen steigen oder sinken.",
+        )
+    if date_basis == "anchor":
+        selected_year = int(year) if year is not None else date.today().year
+        return (
+            f"Lückentage im Ankerjahr {selected_year} nach Woche der ersten Ladung",
+            "Fälle mit Ankerzeitraum im gewählten Jahr, jeweils mit dem letzten IPL innerhalb der Auswahl. "
+            "Das erste Ladedatum kann außerhalb des Ankerjahres liegen. Die Wochenwerte sind nicht kumuliert.",
+        )
+    return (
+        "Lückentage nach Woche der ersten Ladung",
+        "Ein Punkt zeigt die Lückentage der in dieser Woche erstmals geladenen Datensätze. "
+        "Wochenwerte, nicht kumuliert. Wochen ohne Datensätze erscheinen als Lücken in der Linie.",
+    )
+
+
 def render_monitoring_tab(get_refresh_state_fn):
     date_basis = "elad"
-    kpi = get_monitoring_kpis(date.today().year, date_basis)
 
     monitoring_rows, monitoring_cols = get_monitoring_grid_data(
         date.today().year, date_basis
     )
+    kpi = get_monitoring_kpis(date.today().year, date_basis, rows=monitoring_rows)
+    chart_title, chart_description = monitoring_chart_labels(date.today().year, date_basis)
     refresh_state = get_refresh_state_fn()
 
     return html.Div(
@@ -179,6 +206,7 @@ def render_monitoring_tab(get_refresh_state_fn):
                                 options=[
                                     {"label": "Erstes Ladedatum", "value": "elad"},
                                     {"label": "IPL", "value": "ipl"},
+                                    {"label": "Ankerjahr", "value": "anchor"},
                                 ],
                                 value="elad",
                                 inline=True,
@@ -187,10 +215,11 @@ def render_monitoring_tab(get_refresh_state_fn):
                                     "whiteSpace": "nowrap",
                                     "fontSize": "16px",
                                     "color": TEXT,
-                                    "height": "34px",
+                                    "minHeight": "34px",
                                     "boxSizing": "border-box",
                                     "padding": "0 14px",
                                     "display": "flex",
+                                    "flexWrap": "wrap",
                                     "alignItems": "center",
                                     "background": "white",
                                     "border": "1px solid #8893b2",
@@ -253,27 +282,58 @@ def render_monitoring_tab(get_refresh_state_fn):
                             monitoring_rows,
                             monitoring_cols,
                             auto_height=True,
+                            get_row_id="params.data.SV",
                         ),
                         style=CHART_CARD_STYLE,
                     ),
+                    dcc.Store(id="monitoring-dso-selection"),
+                    html.Details([
+                        html.Summary("Bestand DSO", style={"cursor": "pointer"}),
+                        html.Div(id="monitoring-dso-message", role="status",
+                                 children="Wählen Sie einen Ergebnisschlüssel zu einem Sachverhalt."),
+                        html.Div([
+                            dag.AgGrid(
+                                id="monitoring-dso-grid", rowData=[],
+                                columnDefs=[{"headerName": column, "field": column, "width": 190}
+                                            for column in RAW_BESTAND_DISPLAY_COLUMNS],
+                                defaultColDef={"resizable": True, "sortable": False, "filter": "agTextColumnFilter",
+                                               "floatingFilter": True, "cellDataType": False},
+                                style={"height": "420px", "marginTop": "12px"},
+                                className="ag-theme-alpine monitoring-dso-grid",
+                            ),
+                            html.Div([
+                                html.Span(id="monitoring-dso-total", className="monitoring-dso-total"),
+                                html.Div([
+                                    html.Label("Zeilen pro Seite", htmlFor="monitoring-dso-size"),
+                                    dcc.Dropdown(id="monitoring-dso-size", options=list(DSO_PAGE_SIZES),
+                                                 value=DSO_PAGE_SIZE, clearable=False, searchable=False,
+                                                 style={"width": "74px"}),
+                                    html.Span(id="monitoring-dso-range", role="status"),
+                                    html.Button("⏮", id="monitoring-dso-first", disabled=True,
+                                                title="Erste Seite", **{"aria-label": "Erste Seite"}),
+                                    html.Button("‹", id="monitoring-dso-prev", disabled=True,
+                                                title="Vorherige Seite", **{"aria-label": "Vorherige Seite"}),
+                                    html.Span(id="monitoring-dso-page"),
+                                    html.Button("›", id="monitoring-dso-next", disabled=True,
+                                                title="Nächste Seite", **{"aria-label": "Nächste Seite"}),
+                                    html.Button("⏭", id="monitoring-dso-last", disabled=True,
+                                                title="Letzte Seite", **{"aria-label": "Letzte Seite"}),
+                                ], className="monitoring-dso-pager"),
+                            ], className="monitoring-dso-footer"),
+                        ], id="monitoring-dso-content", hidden=True),
+                    ], id="monitoring-dso-details", open=False, className="monitoring-bestand-dso"),
                 ],
                 style=SECTION_STYLE,
             ),
             html.Div(
                 [
                     html.Div(
-                        "Aktuelle Entwicklung der Lückentage je IPL"
-                        if date_basis == "ipl"
-                        else "Lückentage nach Woche der ersten Ladung",
+                        chart_title,
                         id="monitoring-chart-title",
                         style=SUBTITLE_STYLE,
                     ),
                     html.Div(
-                        (
-                            "Periodenwert je IPL (nicht kumuliert). Der Wert kann zwischen zwei IPL-Terminen steigen oder sinken."
-                            if date_basis == "ipl"
-                            else "Ein Punkt zeigt die Lückentage der in dieser Woche erstmals geladenen Datensätze. Wochenwerte, nicht kumuliert. Wochen ohne Datensätze erscheinen als Lücken in der Linie."
-                        ),
+                        chart_description,
                         id="monitoring-chart-description",
                         style={
                             "fontSize": "15px",

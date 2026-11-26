@@ -459,7 +459,7 @@ def render_forecast_tab():
                 [
                     html.Summary(
                         "Neue Fälle mit auffälligen Lückentagen",
-                        style={**SUBTITLE_STYLE, "cursor": "pointer"},
+                        style={**SUBTITLE_STYLE, "fontSize": "18px", "cursor": "pointer"},
                     ),
                     html.Div(id="forecast-severity-content", style=CHART_CARD_STYLE),
                 ],

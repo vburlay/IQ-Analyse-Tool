@@ -1,6 +1,6 @@
 from pack.ui.quality import render_quality_tab, overview_content
 from pack.services.quality_service import load_quality_report
-from pack.data_access import load_anomaly_raw_records
+from pack.data_access import load_anchor_monitoring_cases, load_anomaly_raw_records
 from pack.ui.anomalies import build_severity_section
 import logging
 import threading
@@ -16,7 +16,10 @@ from pack.services.forecast_service import (
     calculate_stichtag_forecast,
     prepare_anchor_forecast_plot_dataset,
 )
-from pack.services.monitoring_service import get_monitoring_grid_data, get_monitoring_kpis, get_monitoring_stand_text
+from pack.services.monitoring_service import (
+    DSO_PAGE_SIZE, DSO_PAGE_SIZES, RESULT_CODES, get_monitoring_dso_page, get_monitoring_grid_data,
+    get_monitoring_kpis, get_monitoring_stand_text,
+)
 from pack.ui.components import sidebar_button_style
 from pack.ui.forecast import (
     anchor_graph_components,
@@ -24,7 +27,7 @@ from pack.ui.forecast import (
     CURRENT_RUN_MESSAGE,
     render_forecast_tab,
 )
-from pack.ui.monitoring import build_monitoring_main_fig, render_monitoring_tab
+from pack.ui.monitoring import build_monitoring_main_fig, monitoring_chart_labels, render_monitoring_tab
 from pack.hana_import import clear_local_database
 from pack.ui.refresh import get_refresh_state, run_hana_refresh, set_refresh_state
 from pack.ui.styles import PAGE_STYLE, SIDEBAR_COLLAPSED_STYLE, SIDEBAR_STYLE
@@ -276,9 +279,10 @@ def register_callbacks(app):
         State("data-version-store", "data"),
         State("active-tab-store", "data"),
         State("monitoring-date-basis", "value"),
+        State("monitoring-year-filter", "value"),
         prevent_initial_call=True,
     )
-    def poll_refresh_status(n_intervals, current_version, active_tab, date_basis):
+    def poll_refresh_status(n_intervals, current_version, active_tab, date_basis, selected_year):
         state = get_refresh_state()
         if state["running"]:
             icon = "⏳" if n_intervals % 2 == 0 else "⌛"
@@ -287,6 +291,7 @@ def register_callbacks(app):
         stand_text = get_monitoring_stand_text(
             state["last_stand"] if date_basis == "elad" else None,
             date_basis,
+            year=selected_year,
         )
         if state["success"] is True:
             message = html.Span(
@@ -336,9 +341,10 @@ def register_callbacks(app):
         Input("refresh-poll-interval", "n_intervals"),
         Input("monitoring-date-basis", "value"),
         Input("data-version-store", "data"),
+        Input("monitoring-year-filter", "value"),
         prevent_initial_call=True,
     )
-    def refresh_stand_line_on_open(active_tab, n_intervals, date_basis, _data_version):
+    def refresh_stand_line_on_open(active_tab, n_intervals, date_basis, _data_version, selected_year):
         if active_tab != "tab-monitoring":
             return no_update
         state = get_refresh_state()
@@ -349,6 +355,7 @@ def register_callbacks(app):
         return get_monitoring_stand_text(
             state["last_stand"] if date_basis == "elad" else None,
             date_basis,
+            year=selected_year,
         )
 
     @app.callback(
@@ -374,23 +381,97 @@ def register_callbacks(app):
         if active_tab != "tab-monitoring":
             return tuple(no_update for _ in range(10))
         date_basis = date_basis or "elad"
-        kpi = get_monitoring_kpis(selected_year, date_basis)
-        rows, cols = get_monitoring_grid_data(selected_year, date_basis)
+        year = selected_year if selected_year is not None else date.today().year
+        anchor_cases = load_anchor_monitoring_cases(year) if date_basis == "anchor" else None
+        rows, cols = get_monitoring_grid_data(year, date_basis, anchor_cases=anchor_cases)
+        kpi = get_monitoring_kpis(year, date_basis, rows=rows)
         return (
             kpi["potential"], kpi["ertrag"], kpi["ertragsanteil"],
             kpi["euro_pro_tag"], kpi["potential_ertragsanteil"],
-            build_monitoring_main_fig(selected_year, date_basis),
+            build_monitoring_main_fig(year, date_basis, anchor_cases=anchor_cases),
             rows, cols,
-            (
-                "Aktuelle Entwicklung der Lückentage je IPL"
-                if date_basis == "ipl"
-                else "Lückentage nach Woche der ersten Ladung"
-            ),
-            (
-                "Periodenwert je IPL (nicht kumuliert). Der Wert kann zwischen zwei IPL-Terminen steigen oder sinken."
-                if date_basis == "ipl"
-                else "Ein Punkt zeigt die Lückentage der in dieser Woche erstmals geladenen Datensätze. Wochenwerte, nicht kumuliert. Wochen ohne Datensätze erscheinen als Lücken in der Linie."
-            ),
+            *monitoring_chart_labels(year, date_basis),
+        )
+
+    @app.callback(
+        Output("monitoring-dso-details", "open"),
+        Output("monitoring-dso-content", "hidden"),
+        Output("monitoring-dso-message", "children"),
+        Output("monitoring-dso-grid", "rowData"),
+        Output("monitoring-dso-total", "children"),
+        Output("monitoring-dso-range", "children"),
+        Output("monitoring-dso-page", "children"),
+        Output("monitoring-dso-first", "disabled"),
+        Output("monitoring-dso-prev", "disabled"),
+        Output("monitoring-dso-next", "disabled"),
+        Output("monitoring-dso-last", "disabled"),
+        Output("monitoring-dso-selection", "data"),
+        Input("monitoring-risk-grid", "cellClicked"),
+        Input("monitoring-risk-grid", "rowData"),
+        Input("monitoring-dso-grid", "filterModel"),
+        Input("monitoring-dso-size", "value"),
+        Input("monitoring-dso-first", "n_clicks"),
+        Input("monitoring-dso-prev", "n_clicks"),
+        Input("monitoring-dso-next", "n_clicks"),
+        Input("monitoring-dso-last", "n_clicks"),
+        State("monitoring-dso-selection", "data"),
+        State("monitoring-year-filter", "value"),
+        State("monitoring-date-basis", "value"),
+        prevent_initial_call=True,
+    )
+    def update_monitoring_dso(click, cross_rows, filters, size, _first, _prev, _next, _last,
+                              selection, year, date_basis):
+        trigger = ctx.triggered_prop_ids
+        empty_content = ([], "", "", "", True, True, True, True, None)
+        clicked = "monitoring-risk-grid.cellClicked" in trigger
+        if clicked:
+            sachverhalt = (click or {}).get("rowId")
+            field = (click or {}).get("colId")
+        else:
+            sachverhalt = (selection or {}).get("sv")
+            field = (selection or {}).get("field")
+        if (
+            field not in RESULT_CODES
+            or sachverhalt in (None, "Gesamtergebnis", "(leer)", "")
+            or not any(row["SV"] == sachverhalt and field in row for row in cross_rows or [])
+        ):
+            return (False, True, "Wählen Sie einen Ergebnisschlüssel zu einem Sachverhalt.", *empty_content)
+        size = size if size in DSO_PAGE_SIZES else DSO_PAGE_SIZE
+        page = (selection or {}).get("page", 0)
+        if clicked or any(prop in trigger for prop in (
+            "monitoring-dso-grid.filterModel", "monitoring-risk-grid.rowData",
+            "monitoring-dso-size.value", "monitoring-dso-first.n_clicks",
+        )):
+            page = 0
+        elif ctx.triggered_id == "monitoring-dso-prev":
+            page -= 1
+        elif ctx.triggered_id == "monitoring-dso-next":
+            page += 1
+        elif ctx.triggered_id == "monitoring-dso-last":
+            page = None
+        selected_year = int(year) if year is not None else date.today().year
+        date_basis = date_basis or "elad"
+        try:
+            records, total_days, page, pages, visible, total = get_monitoring_dso_page(
+                selected_year, date_basis,
+                sachverhalt, page, filters, page_size=size, field=field,
+            )
+        except (ValueError, KeyError):
+            logging.exception("Bestand DSO could not be loaded")
+            return (True, True, "Bestand DSO konnte nicht geladen werden.", *empty_content)
+        mode_label = {"elad": "Erstes Ladedatum", "ipl": "IPL", "anchor": "Ankerjahr"}[date_basis]
+        label = f"Sachverhalt {sachverhalt} · {field} · {mode_label} {selected_year}"
+        if not total:
+            return (True if clicked else no_update, True, f"{label} · Keine Datensätze.", *empty_content)
+        formatted_days = f"{total_days:,.6f}".rstrip("0").rstrip(".").translate(str.maketrans(",.", ".,"))
+        first_row = page * size + 1 if visible else 0
+        last_row = min((page + 1) * size, visible)
+        at_end = page + 1 >= pages
+        return (
+            True if clicked else no_update, False, f"{label} · {visible} von {total} Datensätzen",
+            records, f"Summe Lückentage: {formatted_days}", f"{first_row}–{last_row} von {visible}",
+            f"Seite {page + 1} von {pages}", page == 0, page == 0, at_end, at_end,
+            {"sv": sachverhalt, "field": field, "page": page},
         )
 
     @app.callback(
