@@ -13,7 +13,7 @@ from pack.hana_import import (
 
 
 class HanaImportTests(unittest.TestCase):
-    def test_hana_filter_excludes_only_reversed_periods_with_reason_or_msd(self):
+    def test_hana_filter_excludes_reasons_regardless_of_anchor_period(self):
         connection = duckdb.connect()
         self.addCleanup(connection.close)
         connection.execute("CREATE SCHEMA sap")
@@ -31,6 +31,9 @@ class HanaImportTests(unittest.TestCase):
                 ("20251231", None, "20260201", "4"),
                 ("20251231", "999", "00000000", "10"),
                 ("20261231", "101", "20260201", "20"),
+                ("20261231", "106", None, "21"),
+                ("20261231", "107", None, "22"),
+                ("20261231", None, "20260201", "40"),
                 (None, "107", "20260201", "30"),
             ],
         )
@@ -40,8 +43,8 @@ class HanaImportTests(unittest.TestCase):
             patch("hdbcli.dbapi.connect", return_value=connection),
         ):
             frame = _load_hana_frame("test", "test")
-        self.assertEqual(set(frame["/BIC/YBWRFTAGE"]), {"10", "20", "30"})
-        self.assertEqual(frame.attrs["hana_controls"], (3, 60))
+        self.assertEqual(set(frame["/BIC/YBWRFTAGE"]), {"10", "40"})
+        self.assertEqual(frame.attrs["hana_controls"], (2, 50))
 
     def test_validation_requires_all_application_columns(self):
         with self.assertRaises(HanaImportError):
