@@ -179,21 +179,6 @@ REFRESH_BUTTON_STYLE = {
 }
 
 # ============================================================
-# MONITORING INFO LINE
-# ============================================================
-MONITORING_INFO_LINE_STYLE = {
-    "width": PAGE_WIDTH,
-    "margin": "0 auto 10px auto",
-    "minHeight": "28px",
-    "display": "flex",
-    "alignItems": "center",
-    "justifyContent": "center",
-    "fontSize": "16px",
-    "fontWeight": "bold",
-    "color": TEXT,
-}
-
-# ============================================================
 # GRID / LAYOUT BLOCKS
 # ============================================================
 TWO_COLUMN_ROW_STYLE = {

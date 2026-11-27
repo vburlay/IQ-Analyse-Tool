@@ -4,6 +4,7 @@ from pack.ui.styles import *
 from pack.ui.components import sidebar_button_style
 from pack.ui.callbacks import register_callbacks, SIDEBAR_ITEMS
 from pack.ui.refresh import ensure_database_exists
+from pack.services.monitoring_service import get_monitoring_stand_text
 
 app = Dash(
     __name__, title=APP_TITLE, suppress_callback_exceptions=True,
@@ -80,22 +81,13 @@ app.layout = html.Div(
                         "color": "#404945",
                     },
                 ),
-                html.Div(
-                    "Potential und Ertrag",
-                    id="app-section-title",
-                    className="app-section-title app-section-title--monitoring",
-                    style={
-                        "textAlign": "center",
-                        "fontSize": "17px",
-                        "color": TEXT_MUTED,
-                        "marginBottom": "20px",
-                        "marginTop": "0px",
-                        "lineHeight": "1.35",
-                        "maxWidth": "850px",
-                        "marginLeft": "auto",
-                        "marginRight": "auto",
-                    },
-                ),
+                html.Div([
+                    html.Div("Potential und Ertrag", id="app-section-title",
+                             className="app-section-title app-section-title--monitoring"),
+                    html.Div([
+                        "(", html.Span(get_monitoring_stand_text(), id="monitoring-stand-line"), ")",
+                    ], id="monitoring-stand-label", className="app-section-title--monitoring", role="status"),
+                ], className="app-section-heading"),
                 html.Div(id="tabs-content"),
             ],
         ),

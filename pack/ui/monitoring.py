@@ -16,7 +16,6 @@ from pack.services.monitoring_service import (
     DSO_PAGE_SIZE,
     DSO_PAGE_SIZES,
     get_monitoring_kpis,
-    get_monitoring_stand_text,
     get_monitoring_grid_data,
     get_monitoring_chart_data,
 )
@@ -131,7 +130,7 @@ def monitoring_chart_labels(year, date_basis):
     )
 
 
-def render_monitoring_tab(get_refresh_state_fn):
+def render_monitoring_tab():
     date_basis = "elad"
 
     monitoring_rows, monitoring_cols = get_monitoring_grid_data(
@@ -139,7 +138,6 @@ def render_monitoring_tab(get_refresh_state_fn):
     )
     kpi = get_monitoring_kpis(date.today().year, date_basis, rows=monitoring_rows)
     chart_title, chart_description = monitoring_chart_labels(date.today().year, date_basis)
-    refresh_state = get_refresh_state_fn()
 
     return html.Div(
         [
@@ -171,33 +169,13 @@ def render_monitoring_tab(get_refresh_state_fn):
                                 n_clicks=0,
                                 style=REFRESH_BUTTON_STYLE,
                             ),
-                        ],
-                        className="monitoring-toolbar-login",
-                    ),
-                    html.Div(
-                        [
-                            html.Div(
-                                id="monitoring-stand-line",
-                                children=get_monitoring_stand_text(
-                                    refresh_state["last_stand"] if date_basis == "elad" else None,
-                                    date_basis,
-                                ),
-                                style={
-                                    **MONITORING_INFO_LINE_STYLE,
-                                    "width": "auto",
-                                    "margin": "0",
-                                    "fontSize": "21px",
-                                    "justifyContent": "flex-start",
-                                },
-                                className="monitoring-toolbar-stand",
-                            ),
                             html.Div(
                                 id="hana-login-message",
                                 className="hana-login-message",
                                 role="status",
                             ),
                         ],
-                        className="monitoring-toolbar-status",
+                        className="monitoring-toolbar-login",
                     ),
                     html.Div(
                         [

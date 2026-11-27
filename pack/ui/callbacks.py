@@ -228,7 +228,7 @@ def register_callbacks(app):
     )
     def render_tab(tab):
         if tab == "tab-monitoring":
-            return render_monitoring_tab(get_refresh_state_fn=get_refresh_state), None
+            return render_monitoring_tab(), None
         if tab == "tab-anchor-forecast":
             return render_forecast_tab(), None
         if tab == "tab-quality":
@@ -238,19 +238,21 @@ def register_callbacks(app):
     @app.callback(
         Output("app-section-title", "children"),
         Output("app-section-title", "className"),
+        Output("monitoring-stand-label", "hidden"),
         Input("active-tab-store", "data"),
     )
     def update_section_title(tab):
         if tab == "tab-quality":
-            return "Datenqualität und Auswirkungen auf die Prognose", "app-section-title app-section-title--monitoring"
+            return "Datenqualität und Auswirkungen auf die Prognose", "app-section-title app-section-title--monitoring", True
         if tab == "tab-monitoring":
             return (
                 "Potential und Ertrag",
                 "app-section-title app-section-title--monitoring",
+                False,
             )
         if tab == "tab-anchor-forecast":
-            return "Lückentage nach Ankerjahr: Ist-Wert und Prognose", "app-section-title app-section-title--monitoring"
-        return "", "app-section-title app-section-title--monitoring"
+            return "Lückentage nach Ankerjahr: Ist-Wert und Prognose", "app-section-title app-section-title--monitoring", True
+        return "", "app-section-title app-section-title--monitoring", True
 
     @app.callback(
         Output("refresh-poll-interval", "disabled"),

@@ -42,6 +42,26 @@
     color: #344a42 !important;
 }
 
+.app-section-heading {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: baseline;
+    gap: 4px 8px;
+    width: var(--app-page-width, 90%);
+    margin: 0 auto 20px;
+    line-height: 1.35;
+}
+
+.app-section-heading > .app-section-title {
+    max-width: 850px;
+    text-align: center;
+}
+
+#monitoring-stand-label {
+    text-align: center;
+}
+
 .monitoring-year-dropdown,
 .monitoring-year-dropdown .Select-menu-outer,
 .monitoring-year-dropdown .VirtualizedSelectOption {
@@ -93,15 +113,6 @@
     background: #eaf2f8;
     max-width: 100%;
     box-sizing: border-box;
-}
-
-.monitoring-toolbar-status {
-    flex: 1 1 340px;
-    min-width: 0;
-    max-width: 100%;
-    display: grid;
-    justify-content: center;
-    gap: 4px;
 }
 
 .monitoring-toolbar-filters {
@@ -176,9 +187,15 @@
 }
 
 .hana-login-message {
+    grid-column: 1 / -1;
+    flex-basis: 100%;
     min-height: 20px;
     color: #566b7e;
     font-size: 14px;
+}
+
+.hana-login-message:empty {
+    display: none;
 }
 
 .hana-login-success {
@@ -199,9 +216,6 @@
         flex-wrap: wrap;
     }
 
-    .monitoring-toolbar-status {
-        justify-content: start;
-    }
 }
 
 .ag-theme-alpine .ag-header-cell.pivot-index-header {
