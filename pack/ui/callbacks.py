@@ -30,7 +30,7 @@ from pack.ui.forecast import (
     CURRENT_RUN_MESSAGE,
     render_forecast_tab,
 )
-from pack.ui.monitoring import build_monitoring_main_fig, monitoring_chart_labels, render_monitoring_tab
+from pack.ui.monitoring import build_monitoring_main_fig, monitoring_chart_labels, monitoring_heading, render_monitoring_tab
 from pack.hana_import import clear_local_database
 from pack.ui.refresh import get_refresh_state, run_hana_refresh, set_refresh_state
 from pack.ui.styles import PAGE_STYLE, SECTION_STYLE, SIDEBAR_COLLAPSED_STYLE, SIDEBAR_STYLE
@@ -238,21 +238,32 @@ def register_callbacks(app):
     @app.callback(
         Output("app-section-title", "children"),
         Output("app-section-title", "className"),
-        Output("monitoring-stand-label", "hidden"),
         Input("active-tab-store", "data"),
+        Input("refresh-poll-interval", "n_intervals"),
+        Input("data-version-store", "data"),
+        Input("monitoring-date-basis", "value", allow_optional=True),
+        Input("monitoring-year-filter", "value", allow_optional=True),
     )
-    def update_section_title(tab):
-        if tab == "tab-quality":
-            return "Datenqualität und Auswirkungen auf die Prognose", "app-section-title app-section-title--monitoring", True
+    def update_section_title(tab, n_intervals, _data_version, date_basis, selected_year):
+        heading_class = "app-section-heading app-section-title--monitoring"
         if tab == "tab-monitoring":
-            return (
-                "Potential und Ertrag",
-                "app-section-title app-section-title--monitoring",
-                False,
-            )
+            state = get_refresh_state()
+            date_basis = date_basis or "elad"
+            if state["running"]:
+                icon = "⏳" if (n_intervals or 0) % 2 == 0 else "⌛"
+                stand = f"{icon} Daten werden aktualisiert ..."
+            else:
+                stand = get_monitoring_stand_text(
+                    state["last_stand"] if date_basis == "elad" else None,
+                    date_basis,
+                    year=selected_year,
+                )
+            return monitoring_heading(stand), heading_class
+        if tab == "tab-quality":
+            return "Datenqualität und Auswirkungen auf die Prognose", heading_class
         if tab == "tab-anchor-forecast":
-            return "Lückentage nach Ankerjahr: Ist-Wert und Prognose", "app-section-title app-section-title--monitoring", True
-        return "", "app-section-title app-section-title--monitoring", True
+            return "Lückentage nach Ankerjahr: Ist-Wert und Prognose", heading_class
+        return "", heading_class
 
     @app.callback(
         Output("refresh-poll-interval", "disabled"),
@@ -292,28 +303,19 @@ def register_callbacks(app):
         return False, ""
 
     @app.callback(
-        Output("monitoring-stand-line", "children"),
         Output("refresh-poll-interval", "disabled", allow_duplicate=True),
         Output("data-version-store", "data"),
         Output("hana-login-message", "children"),
         Input("refresh-poll-interval", "n_intervals"),
         State("data-version-store", "data"),
         State("active-tab-store", "data"),
-        State("monitoring-date-basis", "value"),
-        State("monitoring-year-filter", "value"),
         prevent_initial_call=True,
     )
-    def poll_refresh_status(n_intervals, current_version, active_tab, date_basis, selected_year):
+    def poll_refresh_status(_n_intervals, current_version, active_tab):
         state = get_refresh_state()
         if state["running"]:
-            icon = "⏳" if n_intervals % 2 == 0 else "⌛"
-            return f"{icon} Daten werden aktualisiert ...", False, current_version, "Verbindung mit SAP HANA wird hergestellt …"
-        date_basis = date_basis or "elad"
-        stand_text = get_monitoring_stand_text(
-            state["last_stand"] if date_basis == "elad" else None,
-            date_basis,
-            year=selected_year,
-        )
+            message = "Verbindung mit SAP HANA wird hergestellt …"
+            return False, current_version, message if active_tab == "tab-monitoring" else no_update
         if state["success"] is True:
             message = html.Span(
                 [
@@ -322,8 +324,9 @@ def register_callbacks(app):
                 ],
                 className="hana-login-success",
             )
-            return stand_text, True, current_version + 1, message
-        return stand_text, True, current_version, state["message"] or "Lokale Daten bleiben unverändert."
+            return True, (current_version or 0) + 1, message if active_tab == "tab-monitoring" else no_update
+        message = state["message"] or "Lokale Daten bleiben unverändert."
+        return True, current_version, message if active_tab == "tab-monitoring" else no_update
 
     @app.callback(
         Output("confirm-clear-local-data", "displayed"),
@@ -355,29 +358,6 @@ def register_callbacks(app):
                 message="Lokale DuckDB wurde vollständig geleert.",
             )
         return (current_version or 0) + 1, "Lokale DuckDB wurde vollständig geleert.", None
-
-    @app.callback(
-        Output("monitoring-stand-line", "children", allow_duplicate=True),
-        Input("active-tab-store", "data"),
-        Input("refresh-poll-interval", "n_intervals"),
-        Input("monitoring-date-basis", "value"),
-        Input("data-version-store", "data"),
-        Input("monitoring-year-filter", "value"),
-        prevent_initial_call=True,
-    )
-    def refresh_stand_line_on_open(active_tab, n_intervals, date_basis, _data_version, selected_year):
-        if active_tab != "tab-monitoring":
-            return no_update
-        state = get_refresh_state()
-        if state["running"]:
-            icon = "⏳" if n_intervals % 2 == 0 else "⌛"
-            return f"{icon} Daten werden aktualisiert ..."
-        date_basis = date_basis or "elad"
-        return get_monitoring_stand_text(
-            state["last_stand"] if date_basis == "elad" else None,
-            date_basis,
-            year=selected_year,
-        )
 
     @app.callback(
         Output("monitoring-kpi-potential", "children"),

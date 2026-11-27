@@ -130,6 +130,10 @@ def monitoring_chart_labels(year, date_basis):
     )
 
 
+def monitoring_heading(stand):
+    return [html.Span("Potential und Ertrag"), html.Span(f"({stand})", role="status")]
+
+
 def render_monitoring_tab():
     date_basis = "elad"
 
